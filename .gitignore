@@ -1,0 +1,14 @@
+*/.gradle/*
+*/build/*
+*/bin/*
+data/*
+models/huggingface/*
+*.pyc
+# build artifacts / venv / dumps
+hebrew-lemmatizer-embedded/model-export/venv/
+hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/
+*.hprof
+# build artifacts / venv / dumps
+hebrew-lemmatizer-embedded/model-export/venv/
+hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/
+*.hprof

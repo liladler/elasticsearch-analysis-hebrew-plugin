@@ -1,0 +1,222 @@
+// Hebrew Lemmatizer Plugin with Embedded ONNX Model (Classic)
+// Uses Microsoft ONNX Runtime for inference
+// Target: Elasticsearch 9.2.4
+
+ext.elasticsearchVersion = '9.2.4'
+ext.luceneVersion = '10.1.0'
+ext.onnxRuntimeVersion = '1.19.2'
+
+buildscript {
+    ext.elasticsearchVersion = '9.2.4'
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath "org.elasticsearch.gradle:build-tools:${elasticsearchVersion}"
+        classpath "org.ow2.asm:asm:9.6"
+    }
+}
+
+apply plugin: 'elasticsearch.esplugin'
+
+esplugin {
+    name 'heb-lemmas-embedded-plugin'
+    description 'Hebrew lemmas plugin with embedded ONNX model - no Docker required'
+    classname 'ai.korra.HebLemmasPlugin'
+}
+
+// JPMS module name for the plugin
+ext.moduleName = 'ai.korra.heb.lemmatizer'
+def patchedOnnxJar = layout.buildDirectory.file("patched/onnxruntime-${onnxRuntimeVersion}-patched.jar")
+
+group 'ai.korra'
+version '2.0-SNAPSHOT'
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+configurations {
+    onnxruntimeOriginal {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+}
+
+dependencies {
+    // Elasticsearch core (classic plugin API)
+    compileOnly "org.elasticsearch:elasticsearch:${elasticsearchVersion}"
+    compileOnly "org.apache.lucene:lucene-analysis-common:${luceneVersion}"
+
+    // Microsoft ONNX Runtime (patched to remove shutdown hook)
+    onnxruntimeOriginal "com.microsoft.onnxruntime:onnxruntime:${onnxRuntimeVersion}"
+    implementation files(patchedOnnxJar)
+    
+    // JSON parsing for tokenizer vocabulary
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    // Test dependencies
+    testImplementation "org.elasticsearch:elasticsearch:${elasticsearchVersion}"
+    testImplementation "org.apache.lucene:lucene-analysis-common:${luceneVersion}"
+    
+    testImplementation('junit:junit:4.13.2') {
+        exclude group: 'org.hamcrest'
+    }
+    testImplementation 'org.hamcrest:hamcrest:2.2'
+}
+
+processResources {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    
+    // Exclude signature files from dependencies
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    
+    // Add module name to manifest for JPMS support
+    manifest {
+        attributes(
+            'Automatic-Module-Name': moduleName
+        )
+    }
+}
+
+tasks.register("patchOnnxRuntime") {
+    inputs.files(configurations.onnxruntimeOriginal)
+    outputs.file(patchedOnnxJar)
+    doLast {
+        def originalJar = configurations.onnxruntimeOriginal.singleFile
+        def outputJar = patchedOnnxJar.get().asFile
+        outputJar.parentFile.mkdirs()
+
+        def jar = new java.util.jar.JarFile(originalJar)
+        def jos = new java.util.jar.JarOutputStream(new java.io.BufferedOutputStream(new java.io.FileOutputStream(outputJar)))
+        try {
+            def entries = jar.entries()
+            while (entries.hasMoreElements()) {
+                def entry = entries.nextElement()
+                def inStream = new java.io.BufferedInputStream(jar.getInputStream(entry))
+                def entryName = entry.getName()
+                def newEntry = new java.util.jar.JarEntry(entryName)
+                jos.putNextEntry(newEntry)
+
+                if (entryName == "ai/onnxruntime/OrtEnvironment.class") {
+                    def bytes = inStream.bytes
+                    def cr = new org.objectweb.asm.ClassReader(bytes)
+                    def cw = new org.objectweb.asm.ClassWriter(cr, org.objectweb.asm.ClassWriter.COMPUTE_FRAMES)
+                    def cv = new org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM9, cw) {
+                        @Override
+                        org.objectweb.asm.MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] exceptions) {
+                            def mv = super.visitMethod(access, name, desc, sig, exceptions)
+                            if (name == "<init>") {
+                                return new org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM9, mv) {
+                                    @Override
+                                    void visitMethodInsn(int opcode, String owner, String mName, String mDesc, boolean itf) {
+                                        if (opcode == org.objectweb.asm.Opcodes.INVOKEVIRTUAL
+                                                && owner == "java/lang/Runtime"
+                                                && mName == "addShutdownHook") {
+                                            // Drop Runtime and Thread from stack, skip hook registration.
+                                            super.visitInsn(org.objectweb.asm.Opcodes.POP2)
+                                            return
+                                        }
+                                        super.visitMethodInsn(opcode, owner, mName, mDesc, itf)
+                                    }
+                                }
+                            }
+                            return mv
+                        }
+                    }
+                    cr.accept(cv, org.objectweb.asm.ClassReader.SKIP_FRAMES)
+                    jos.write(cw.toByteArray())
+                } else {
+                    byte[] buffer = new byte[8192]
+                    int read
+                    while ((read = inStream.read(buffer)) != -1) {
+                        jos.write(buffer, 0, read)
+                    }
+                }
+                jos.closeEntry()
+                inStream.close()
+            }
+        } finally {
+            jos.close()
+            jar.close()
+        }
+    }
+}
+
+// Verify model files exist before build
+task checkModelFiles {
+    doLast {
+        def modelFile = file('src/main/resources/model/model.onnx')
+        def tokenizerFile = file('src/main/resources/model/tokenizer.json')
+        
+        if (!modelFile.exists()) {
+            logger.warn("WARNING: Model file not found: ${modelFile}")
+            logger.warn("Run the export script first:")
+            logger.warn("  cd ../model-export && pip install -r requirements.txt && python export_model.py")
+        }
+        
+        if (!tokenizerFile.exists()) {
+            logger.warn("WARNING: Tokenizer file not found: ${tokenizerFile}")
+        }
+    }
+}
+
+compileJava.dependsOn checkModelFiles
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+compileJava {
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['--module-path', classpath.asPath]
+    classpath = files()
+}
+
+compileJava.dependsOn tasks.named("patchOnnxRuntime")
+processResources.dependsOn tasks.named("patchOnnxRuntime")
+
+// Inject modulename into classic plugin descriptor for JPMS loading
+def descriptorFile = layout.buildDirectory.file("generated-descriptor/plugin-descriptor.properties")
+tasks.register("patchPluginDescriptor") {
+    doLast {
+        def file = descriptorFile.get().asFile
+        if (!file.exists()) {
+            return
+        }
+        def text = file.getText("UTF-8")
+        if (!text.contains("modulename=")) {
+            file.setText(text + "\nmodulename=${moduleName}\n", "UTF-8")
+        }
+    }
+}
+
+afterEvaluate {
+    def propsTask = tasks.findByName("pluginProperties")
+    if (propsTask != null) {
+        tasks.named("patchPluginDescriptor").configure { dependsOn propsTask }
+    }
+    def bundleTask = tasks.findByName("bundlePlugin")
+    if (bundleTask != null) {
+        bundleTask.dependsOn tasks.named("patchPluginDescriptor")
+    }
+}
+
+test {
+    useJUnit()
+    environment 'KORRA_HEB_DEBUG', 'TRUE'
+    maxHeapSize = '2g'
+    
+    testLogging {
+        events "passed", "skipped", "failed"
+        showStandardStreams = true
+    }
+}

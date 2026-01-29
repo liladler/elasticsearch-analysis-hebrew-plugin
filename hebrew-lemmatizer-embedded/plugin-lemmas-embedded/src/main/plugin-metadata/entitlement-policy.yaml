@@ -1,0 +1,14 @@
+# Entitlement policy for Hebrew Lemmatizer Embedded Plugin
+# Classic plugin loaded as module: ai.korra.heb.lemmatizer
+
+ai.korra.heb.lemmatizer:
+  - load_native_libraries
+  - manage_threads
+  - files:
+    - relative_path: "heb-lemmatizer"
+      relative_to: "data"
+      mode: "read_write"
+
+com.microsoft.onnxruntime:
+  - load_native_libraries
+  - manage_threads
