@@ -34,7 +34,7 @@ ext.moduleName = 'ai.korra.heb.lemmatizer'
 def patchedOnnxJar = layout.buildDirectory.file("patched/onnxruntime-${onnxRuntimeVersion}-patched.jar")
 
 group 'ai.korra'
-version '2.0-SNAPSHOT'
+version elasticsearchVersion
 
 repositories {
     maven { url "https://artifacts.elastic.co/maven" }

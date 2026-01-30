@@ -1,4 +1,5 @@
 */.gradle/*
+hebrew-lemmatizer-embedded/plugin-lemmas-embedded/.gradle/
 */build/*
 */bin/*
 data/*

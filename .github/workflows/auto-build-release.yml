@@ -1,0 +1,60 @@
+name: Build plugin on ES release
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get latest Elasticsearch release
+        id: es
+        run: |
+          latest_tag=$(gh api repos/elastic/elasticsearch/releases/latest --jq .tag_name)
+          echo "es_tag=${latest_tag}" >> "$GITHUB_OUTPUT"
+          echo "es_version=${latest_tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Check if release already exists
+        id: exists
+        run: |
+          if gh release view "${{ steps.es.outputs.es_tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.exists.outputs.exists == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install Python dependencies
+        if: steps.exists.outputs.exists == 'false'
+        run: |
+          python -m pip install -U pip
+          pip install -r hebrew-lemmatizer-embedded/model-export/requirements.txt
+
+      - name: Build plugin
+        if: steps.exists.outputs.exists == 'false'
+        run: |
+          ./scripts/build_plugin_linux.sh --es-version "${{ steps.es.outputs.es_version }}"
+
+      - name: Create release with assets
+        if: steps.exists.outputs.exists == 'false'
+        run: |
+          zip_path="hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-plugin-${{ steps.es.outputs.es_version }}.zip"
+          model_path="hebrew-lemmatizer-embedded/plugin-lemmas-embedded/src/main/resources/model/model.onnx"
+          gh release create "${{ steps.es.outputs.es_tag }}" \
+            "$zip_path" "$model_path" \
+            --title "Elasticsearch ${{ steps.es.outputs.es_version }} plugin" \
+            --notes "Embedded Hebrew analyzer plugin for ES ${{ steps.es.outputs.es_version }} (INT8 ONNX)."

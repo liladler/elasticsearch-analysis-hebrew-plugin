@@ -7,7 +7,7 @@ ONNX_VERSION=""
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLUGIN_DIR="${ROOT_DIR}/hebrew-lemmatizer-embedded/plugin-lemmas-embedded"
 MODEL_EXPORT_DIR="${ROOT_DIR}/hebrew-lemmatizer-embedded/model-export"
-ZIP_PATH="${PLUGIN_DIR}/build/distributions/heb-lemmas-embedded-plugin-2.0-SNAPSHOT.zip"
+ZIP_PATH="${PLUGIN_DIR}/build/distributions/heb-lemmas-embedded-plugin-${ES_VERSION}.zip"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,12 +42,11 @@ if [[ -n "${ONNX_VERSION}" ]]; then
 fi
 
 docker run --rm \
+  -u "$(id -u):$(id -g)" \
+  -e GRADLE_USER_HOME=/workspace/.gradle \
   -v "${ROOT_DIR}:/workspace" \
   -w /workspace/hebrew-lemmatizer-embedded/plugin-lemmas-embedded \
   eclipse-temurin:21-jdk ./gradlew clean bundlePlugin "${GRADLE_ARGS[@]}"
 
-echo "==> Renaming zip to include ES version"
-cp -f "${ZIP_PATH}" "${ES_ZIP_PATH}"
-
 echo "==> Done"
-echo "Zip: ${ES_ZIP_PATH}"
+echo "Zip: ${ZIP_PATH}"

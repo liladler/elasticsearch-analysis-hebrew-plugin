@@ -44,7 +44,7 @@ Optional version overrides:
 Output:
 
 ```
-hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-plugin-9.3.0.zip
+hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-plugin-<ES_VERSION>.zip
 ```
 
 ## Install & test (local ES)
