@@ -3,7 +3,17 @@ name: Build plugin on ES release
 on:
   schedule:
     - cron: "0 6 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      es_version:
+        description: "Elasticsearch version to build (e.g., 9.2.4)"
+        required: true
+        type: string
+      create_release:
+        description: "Create GitHub release (true/false)"
+        required: false
+        default: "true"
+        type: string
 
 permissions:
   contents: write
@@ -16,14 +26,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get latest Elasticsearch release
+      - name: Resolve Elasticsearch version
         id: es
         run: |
-          latest_tag=$(gh api repos/elastic/elasticsearch/releases/latest --jq .tag_name)
-          echo "es_tag=${latest_tag}" >> "$GITHUB_OUTPUT"
-          echo "es_version=${latest_tag#v}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            es_version="${{ inputs.es_version }}"
+            es_tag="v${es_version}"
+          else
+            es_tag=$(gh api repos/elastic/elasticsearch/releases/latest --jq .tag_name)
+            es_version="${es_tag#v}"
+          fi
+          echo "es_tag=${es_tag}" >> "$GITHUB_OUTPUT"
+          echo "es_version=${es_version}" >> "$GITHUB_OUTPUT"
 
       - name: Check if release already exists
+        if: github.event_name == 'schedule' || inputs.create_release == 'true'
         id: exists
         run: |
           if gh release view "${{ steps.es.outputs.es_tag }}" >/dev/null 2>&1; then
@@ -33,24 +50,24 @@ jobs:
           fi
 
       - name: Set up Python
-        if: steps.exists.outputs.exists == 'false'
+        if: github.event_name == 'workflow_dispatch' || steps.exists.outputs.exists == 'false'
         uses: actions/setup-python@v5
         with:
           python-version: "3.9"
 
       - name: Install Python dependencies
-        if: steps.exists.outputs.exists == 'false'
+        if: github.event_name == 'workflow_dispatch' || steps.exists.outputs.exists == 'false'
         run: |
           python -m pip install -U pip
           pip install -r hebrew-lemmatizer-embedded/model-export/requirements.txt
 
       - name: Build plugin
-        if: steps.exists.outputs.exists == 'false'
+        if: github.event_name == 'workflow_dispatch' || steps.exists.outputs.exists == 'false'
         run: |
           ./scripts/build_plugin_linux.sh --es-version "${{ steps.es.outputs.es_version }}"
 
       - name: Create release with assets
-        if: steps.exists.outputs.exists == 'false'
+        if: (github.event_name == 'schedule' || inputs.create_release == 'true') && steps.exists.outputs.exists == 'false'
         run: |
           zip_path="hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-plugin-${{ steps.es.outputs.es_version }}.zip"
           model_path="hebrew-lemmatizer-embedded/plugin-lemmas-embedded/src/main/resources/model/model.onnx"
