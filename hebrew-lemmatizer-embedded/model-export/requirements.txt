@@ -1,0 +1,6 @@
+# Requirements for exporting DictaBERT to ONNX
+torch==2.8.0
+transformers==4.57.6
+optimum[onnxruntime]==2.1.0
+onnx==1.19.1
+onnxruntime==1.19.2

@@ -1,0 +1,17 @@
+*/.gradle/*
+hebrew-lemmatizer-embedded/plugin-lemmas-embedded/.gradle/
+*/build/*
+*/bin/*
+data/*
+models/huggingface/*
+*.pyc
+# build artifacts / venv / dumps
+hebrew-lemmatizer-embedded/model-export/venv/
+hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/
+*.hprof
+hebrew-lemmatizer-embedded/plugin-lemmas-embedded/src/main/resources/model/model.onnx
+.gradle/
+hebrew-lemmatizer-embedded/model-export/.python-version
+hebrew-lemmatizer-embedded/model-export/.venv39/
+hebrew-lemmatizer-embedded/.DS_Store
+.DS_Store
