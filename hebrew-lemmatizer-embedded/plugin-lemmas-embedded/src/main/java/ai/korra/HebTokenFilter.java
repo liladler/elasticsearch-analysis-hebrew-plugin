@@ -28,6 +28,9 @@ public class HebTokenFilter extends TokenFilter {
     private List<String> lemmaList = new ArrayList<>();
     private int lemmaIndex;
     private final List<String> tokenList = new ArrayList<>();
+    private final List<int[]> offsetList = new ArrayList<>();
+    private final List<Integer> posIncrementList = new ArrayList<>();
+    private final List<String> typeList = new ArrayList<>();
     private boolean initialized = false;
 
     public HebTokenFilter(TokenStream input) {
@@ -54,6 +57,9 @@ public class HebTokenFilter extends TokenFilter {
         lemmaList.clear();
         lemmaIndex = 0;
         tokenList.clear();
+        offsetList.clear();
+        posIncrementList.clear();
+        typeList.clear();
         super.reset();
     }
 
@@ -67,14 +73,17 @@ public class HebTokenFilter extends TokenFilter {
         }
 
         tokenList.clear();
+        offsetList.clear();
+        posIncrementList.clear();
+        typeList.clear();
         if (input.incrementToken()) {
-            tokenList.add(termAttr.toString());
+            captureCurrentToken();
         } else {
             return false;
         }
 
         while (input.incrementToken()) {
-            tokenList.add(termAttr.toString());
+            captureCurrentToken();
         }
 
         try {
@@ -94,15 +103,22 @@ public class HebTokenFilter extends TokenFilter {
         return true;
     }
 
-    private void produceTerm() {
-        int origStart = offsetAttr.startOffset();
-        int origEnd = offsetAttr.endOffset();
-        String lemma = lemmaList.get(lemmaIndex);
+    private void captureCurrentToken() {
+        tokenList.add(termAttr.toString());
+        offsetList.add(new int[] { offsetAttr.startOffset(), offsetAttr.endOffset() });
+        posIncrementList.add(posAttr.getPositionIncrement());
+        typeList.add(typeAttr.type());
+    }
 
-        offsetAttr.setOffset(origStart, origEnd);
-        typeAttr.setType(typeAttr.type());
+    private void produceTerm() {
+        String lemma = lemmaList.get(lemmaIndex);
+        int[] offsets = offsetList.get(lemmaIndex);
+
+        clearAttributes();
         termAttr.setEmpty().append(lemma);
-        posAttr.setPositionIncrement(1);
+        offsetAttr.setOffset(offsets[0], offsets[1]);
+        posAttr.setPositionIncrement(posIncrementList.get(lemmaIndex));
+        typeAttr.setType(typeList.get(lemmaIndex));
 
         lemmaIndex++;
         emitExtraToken = lemmaIndex < lemmaList.size();
