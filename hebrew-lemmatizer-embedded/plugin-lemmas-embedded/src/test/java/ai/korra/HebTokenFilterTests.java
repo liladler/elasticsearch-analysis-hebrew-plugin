@@ -21,11 +21,11 @@ public class HebTokenFilterTests {
 
     @Test
     public void preservesOffsetsForEachEmittedLemma() throws IOException {
-        List<TokenData> tokens = analyze("DBA wanted", input -> List.of("dba", "want"));
+        List<TokenData> tokens = analyze("הילדים אוכלים", input -> List.of("ילד", "אוכל"));
 
         assertEquals(2, tokens.size());
-        assertToken(tokens.get(0), "dba", 0, 3, 1);
-        assertToken(tokens.get(1), "want", 4, 10, 1);
+        assertToken(tokens.get(0), "ילד", 0, 6, 1);
+        assertToken(tokens.get(1), "אוכל", 7, 13, 1);
     }
 
     @Test
