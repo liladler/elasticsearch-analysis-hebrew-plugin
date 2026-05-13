@@ -31,13 +31,23 @@ public class HebTokenFilter extends TokenFilter {
     private final List<int[]> offsetList = new ArrayList<>();
     private final List<Integer> posIncrementList = new ArrayList<>();
     private final List<String> typeList = new ArrayList<>();
+    private final LemmatizerProvider lemmatizerProvider;
     private boolean initialized = false;
 
     public HebTokenFilter(TokenStream input) {
         super(input);
+        this.lemmatizerProvider = null;
+    }
+
+    HebTokenFilter(TokenStream input, LemmatizerProvider lemmatizerProvider) {
+        super(input);
+        this.lemmatizerProvider = lemmatizerProvider;
     }
 
     private void initializeLemmatizer() throws IOException {
+        if (lemmatizerProvider != null) {
+            return;
+        }
         if (!initialized) {
             try {
                 debugger.debugPrint("Initializing embedded ONNX lemmatizer");
@@ -64,7 +74,7 @@ public class HebTokenFilter extends TokenFilter {
     }
 
     @Override
-    public boolean incrementToken() throws IOException {
+    public final boolean incrementToken() throws IOException {
         initializeLemmatizer();
 
         if (emitExtraToken) {
@@ -87,7 +97,9 @@ public class HebTokenFilter extends TokenFilter {
         }
 
         try {
-            lemmaList = lemmatizer.lemmatize(tokenList);
+            lemmaList = lemmatizerProvider != null
+                    ? lemmatizerProvider.lemmatize(tokenList)
+                    : lemmatizer.lemmatize(tokenList);
             lemmaIndex = 0;
         } catch (Exception e) {
             debugger.debugPrint("Lemmatization error: " + e.getMessage());
@@ -122,5 +134,10 @@ public class HebTokenFilter extends TokenFilter {
 
         lemmaIndex++;
         emitExtraToken = lemmaIndex < lemmaList.size();
+    }
+
+    @FunctionalInterface
+    interface LemmatizerProvider {
+        List<String> lemmatize(List<String> tokens) throws Exception;
     }
 }
