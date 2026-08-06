@@ -1,17 +1,38 @@
 # elasticsearch-analysis-hebrew-plugin
 
-This repo is a **fork** focused on an embedded, optimized Hebrew analyzer for Elasticsearch 9.x.
+This branch provides the smaller **DictaBERT Tiny Joint** variant of the embedded,
+optimized Hebrew analyzer for Elasticsearch 9.x. Use `agent/optimize-onnx-int8-top3`
+when DictaBERT-Lex accuracy is preferred over maximum indexing throughput.
 
 ## What is different in this fork
 
-- Embedded DictaBERT model (no external Docker service)
+- Embedded DictaBERT Tiny Joint model (no external Docker service)
 - ONNX Runtime 1.26 in-process inference
-- INT8 quantized DictaBERT-Lex model
+- INT8 quantized DictaBERT Tiny Joint model
 - Top-3 predictions emitted inside the ONNX graph to avoid copying full logits into Java
 - Fail-fast validation of the Java/ONNX output contract before indexing
 - Content-addressed model extraction under the configured Elasticsearch data path
 - Stopwords included **in the same plugin** (`heb_stopwords`)
 - ES 9.x classic plugin with entitlements
+
+## Tiny versus Lex
+
+Tiny is an explicit throughput/quality choice; it is not intended to replace the
+Lex branch for every workload. On the public Hebrew UD test set used here, Tiny
+scored 5,073/5,763 exact lemmas (88.027%) and Lex scored 5,117/5,763 (88.791%),
+a difference of 0.76 percentage points.
+
+Representative local ES 9.4.4 Docker results (8 vCPU, 4 GB container, 2 GB heap,
+10 lines per document, concurrency 8) were:
+
+| Variant | 35-document bulks | 100-document bulks |
+| --- | ---: | ---: |
+| Tiny INT8 + Top-3 + ORT 1.26 | 184.7 docs/s | 188.8 docs/s |
+| Lex INT8 + Top-3 + ORT 1.26 | 50.3 docs/s | 51.8 docs/s |
+
+Both runs completed without failed requests or 429 responses. These figures are
+a relative local comparison, not a production capacity guarantee; validate the
+quality tradeoff on a representative corpus before choosing Tiny.
 
 ## Build
 

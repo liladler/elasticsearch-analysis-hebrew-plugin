@@ -1,29 +1,43 @@
 #!/usr/bin/env python3
 """
-Export DictaBERT-Lex to ONNX format for the Hebrew Lemmatizer plugin.
+Export DictaBERT Tiny Joint to ONNX format for the Hebrew Lemmatizer plugin.
 
 This script:
-1. Downloads the dicta-il/dictabert-lex model from HuggingFace
+1. Downloads the pinned dicta-il/dictabert-tiny-joint model from Hugging Face
 2. Converts it to ONNX format with INT8 weight quantization
 3. Replaces the full logits output with the sorted top-three token IDs
 4. Copies the tokenizer.json for use by the Java plugin
 """
 
-import os
 import shutil
-import json
 import hashlib
 from pathlib import Path
 
 import torch
-from transformers import AutoTokenizer, AutoModelForMaskedLM
-from optimum.onnxruntime import ORTModelForMaskedLM
+from transformers import AutoTokenizer, AutoModel
 from onnxruntime.quantization import quantize_dynamic, QuantType
 import onnx
 from onnx import TensorProto, helper
 
-MODEL_NAME = "dicta-il/dictabert-lex"
+MODEL_NAME = "dicta-il/dictabert-tiny-joint"
+MODEL_REVISION = "708026b7297ffde293f14a3a592f8cf649f12c38"
 OUTPUT_DIR = Path(__file__).parent.parent / "plugin-lemmas-embedded" / "src" / "main" / "resources" / "model"
+
+
+class LexemeLogitsWrapper(torch.nn.Module):
+    """Expose only the custom joint model's lexeme logits for ONNX export."""
+
+    def __init__(self, model: torch.nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, input_ids, attention_mask, token_type_ids):
+        return self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            return_dict=True,
+        ).lex_logits
 
 
 def calculate_cache_key(*paths: Path) -> str:
@@ -82,7 +96,7 @@ def export_model():
     
     # Load tokenizer
     print("Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, revision=MODEL_REVISION)
     
     # Save tokenizer.json
     tokenizer_path = OUTPUT_DIR / "tokenizer.json"
@@ -106,7 +120,7 @@ def export_model():
                 print(f"Found tokenizer: {f}")
                 break
     
-    # Export model to ONNX using optimum
+    # Export the custom joint model's lexeme head to ONNX.
     print("Converting model to ONNX...")
     
     # Create a temporary directory for the ONNX export
@@ -114,27 +128,41 @@ def export_model():
     temp_dir.mkdir(exist_ok=True)
     
     try:
-        # Export using optimum
-        ort_model = ORTModelForMaskedLM.from_pretrained(
+        model = AutoModel.from_pretrained(
             MODEL_NAME,
-            export=True,
-            provider="CPUExecutionProvider",
-            dtype=torch.float32
+            revision=MODEL_REVISION,
+            trust_remote_code=True,
+            do_syntax=False,
+            do_ner=False,
+            do_prefix=False,
+            do_lex=True,
+            do_morph=False,
         )
-        
-        # Save the ONNX model
-        ort_model.save_pretrained(str(temp_dir))
-        
-        # Locate the exported ONNX model file
-        onnx_file = temp_dir / "model.onnx"
-        if not onnx_file.exists():
-            # Look for any .onnx file
-            for f in temp_dir.glob("*.onnx"):
-                onnx_file = f
-                break
+        model.eval()
+        export_model = LexemeLogitsWrapper(model)
 
-        if not onnx_file.exists():
-            raise FileNotFoundError("ONNX export did not produce a model file")
+        sample = tokenizer("בדיקת ייצוא", return_tensors="pt")
+        onnx_file = temp_dir / "model.onnx"
+        torch.onnx.export(
+            export_model,
+            (
+                sample["input_ids"],
+                sample["attention_mask"],
+                sample["token_type_ids"],
+            ),
+            str(onnx_file),
+            input_names=["input_ids", "attention_mask", "token_type_ids"],
+            output_names=["logits"],
+            dynamic_axes={
+                "input_ids": {0: "batch", 1: "seq"},
+                "attention_mask": {0: "batch", 1: "seq"},
+                "token_type_ids": {0: "batch", 1: "seq"},
+                "logits": {0: "batch", 1: "seq"},
+            },
+            opset_version=17,
+            do_constant_folding=True,
+            dynamo=False,
+        )
 
         # Quantize to INT8 for fast CPU inference
         quantized_file = temp_dir / "model-int8.onnx"
