@@ -4,7 +4,7 @@ Export DictaBERT Tiny Joint to ONNX format for the Hebrew Lemmatizer plugin.
 
 This script:
 1. Downloads the pinned dicta-il/dictabert-tiny-joint model from Hugging Face
-2. Converts it to ONNX format with INT8 weight quantization
+2. Converts it to ONNX format with per-channel INT8 weight quantization
 3. Replaces the full logits output with the sorted top-three token IDs
 4. Copies the tokenizer.json for use by the Java plugin
 """
@@ -21,6 +21,8 @@ from onnx import TensorProto, helper
 
 MODEL_NAME = "dicta-il/dictabert-tiny-joint"
 MODEL_REVISION = "708026b7297ffde293f14a3a592f8cf649f12c38"
+# The model config loads its custom class from the separate dictabert-joint repo.
+CODE_REVISION = "c119de75b7115e746cf21df9a0c06758935d74ad"
 OUTPUT_DIR = Path(__file__).parent.parent / "plugin-lemmas-embedded" / "src" / "main" / "resources" / "model"
 
 
@@ -32,12 +34,17 @@ class LexemeLogitsWrapper(torch.nn.Module):
         self.model = model
 
     def forward(self, input_ids, attention_mask, token_type_ids):
-        return self.model(
+        # The pinned upstream joint forward references an uninitialized `loss`
+        # for lex-only inference. Calling the two required modules directly also
+        # keeps unrelated heads out of the exported graph. Dropout is identity
+        # because the model is put in eval mode before export.
+        hidden_states = self.model.bert(
             input_ids=input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             return_dict=True,
-        ).lex_logits
+        ).last_hidden_state
+        return self.model.cls(hidden_states)
 
 
 def calculate_cache_key(*paths: Path) -> str:
@@ -131,6 +138,7 @@ def export_model():
         model = AutoModel.from_pretrained(
             MODEL_NAME,
             revision=MODEL_REVISION,
+            code_revision=CODE_REVISION,
             trust_remote_code=True,
             do_syntax=False,
             do_ner=False,
@@ -167,7 +175,12 @@ def export_model():
         # Quantize to INT8 for fast CPU inference
         quantized_file = temp_dir / "model-int8.onnx"
         print(f"Quantizing ONNX model to INT8: {quantized_file}")
-        quantize_dynamic(str(onnx_file), str(quantized_file), weight_type=QuantType.QInt8)
+        quantize_dynamic(
+            str(onnx_file),
+            str(quantized_file),
+            weight_type=QuantType.QInt8,
+            per_channel=True,
+        )
 
         # Return only the top-three IDs. The Java filter never uses the remaining
         # logits, and exporting them creates a large native-to-heap copy per field.
