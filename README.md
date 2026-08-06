@@ -5,8 +5,11 @@ This repo is a **fork** focused on an embedded, optimized Hebrew analyzer for El
 ## What is different in this fork
 
 - Embedded DictaBERT model (no external Docker service)
-- ONNX Runtime in-process inference
-- INT8 quantized ONNX model
+- ONNX Runtime 1.26 in-process inference
+- INT8 quantized DictaBERT-Lex model
+- Top-3 predictions emitted inside the ONNX graph to avoid copying full logits into Java
+- Fail-fast validation of the Java/ONNX output contract before indexing
+- Content-addressed model extraction under the configured Elasticsearch data path
 - Stopwords included **in the same plugin** (`heb_stopwords`)
 - ES 9.x classic plugin with entitlements
 

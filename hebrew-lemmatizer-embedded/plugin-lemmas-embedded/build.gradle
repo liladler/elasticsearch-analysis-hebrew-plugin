@@ -3,7 +3,7 @@
 // Target: Elasticsearch 9.2.4 (override with -P properties)
 
 ext.elasticsearchVersion = project.findProperty('elasticsearchVersion') ?: '9.2.4'
-ext.onnxRuntimeVersion = project.findProperty('onnxRuntimeVersion') ?: '1.19.2'
+ext.onnxRuntimeVersion = project.findProperty('onnxRuntimeVersion') ?: '1.26.0'
 
 buildscript {
     ext.elasticsearchVersion = project.findProperty('elasticsearchVersion') ?: '9.2.4'
@@ -170,15 +170,34 @@ task checkModelFiles {
     doLast {
         def modelFile = file('src/main/resources/model/model.onnx')
         def tokenizerFile = file('src/main/resources/model/tokenizer.json')
+        def cacheKeyFile = file('src/main/resources/model/model-cache-key.txt')
         
         if (!modelFile.exists()) {
-            logger.warn("WARNING: Model file not found: ${modelFile}")
-            logger.warn("Run the export script first:")
-            logger.warn("  cd ../model-export && pip install -r requirements.txt && python export_model.py")
+            throw new GradleException("Model file not found: ${modelFile}. Run export_model.py first.")
         }
         
         if (!tokenizerFile.exists()) {
-            logger.warn("WARNING: Tokenizer file not found: ${tokenizerFile}")
+            throw new GradleException("Tokenizer file not found: ${tokenizerFile}. Run export_model.py first.")
+        }
+
+        if (!cacheKeyFile.exists()) {
+            throw new GradleException("Model cache key not found: ${cacheKeyFile}. Run export_model.py first.")
+        }
+
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+        [modelFile, tokenizerFile].each { resourceFile ->
+            resourceFile.withInputStream { stream ->
+                byte[] buffer = new byte[1024 * 1024]
+                int read
+                while ((read = stream.read(buffer)) != -1) {
+                    digest.update(buffer, 0, read)
+                }
+            }
+        }
+        def actualCacheKey = digest.digest().encodeHex().toString()
+        def expectedCacheKey = cacheKeyFile.getText('UTF-8').trim()
+        if (actualCacheKey != expectedCacheKey) {
+            throw new GradleException("Model cache key is stale. Run export_model.py before building.")
         }
     }
 }

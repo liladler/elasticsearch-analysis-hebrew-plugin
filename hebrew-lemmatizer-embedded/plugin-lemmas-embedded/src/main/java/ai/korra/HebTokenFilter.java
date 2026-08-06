@@ -1,6 +1,7 @@
 package ai.korra;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -32,16 +33,19 @@ public class HebTokenFilter extends TokenFilter {
     private final List<Integer> posIncrementList = new ArrayList<>();
     private final List<String> typeList = new ArrayList<>();
     private final LemmatizerProvider lemmatizerProvider;
+    private final Path dataPath;
     private boolean initialized = false;
 
-    public HebTokenFilter(TokenStream input) {
+    HebTokenFilter(TokenStream input, Path dataPath) {
         super(input);
         this.lemmatizerProvider = null;
+        this.dataPath = dataPath;
     }
 
     HebTokenFilter(TokenStream input, LemmatizerProvider lemmatizerProvider) {
         super(input);
         this.lemmatizerProvider = lemmatizerProvider;
+        this.dataPath = null;
     }
 
     private void initializeLemmatizer() throws IOException {
@@ -51,7 +55,7 @@ public class HebTokenFilter extends TokenFilter {
         if (!initialized) {
             try {
                 debugger.debugPrint("Initializing embedded ONNX lemmatizer");
-                lemmatizer = OnnxLemmatizer.getInstance();
+                lemmatizer = OnnxLemmatizer.getInstance(dataPath);
                 initialized = true;
                 debugger.debugPrint("ONNX lemmatizer ready");
             } catch (Exception e) {
