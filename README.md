@@ -1,7 +1,8 @@
 # elasticsearch-analysis-hebrew-plugin
 
 This branch provides the smaller **DictaBERT Tiny Joint** variant of the embedded,
-optimized Hebrew analyzer for Elasticsearch 9.x. Use `agent/optimize-onnx-int8-top3`
+optimized Hebrew analyzer for Elasticsearch 9.x. Use
+[`main`](https://github.com/liladler/elasticsearch-analysis-hebrew-plugin/tree/main)
 when DictaBERT-Lex accuracy is preferred over maximum indexing throughput.
 
 ## What is different in this fork
