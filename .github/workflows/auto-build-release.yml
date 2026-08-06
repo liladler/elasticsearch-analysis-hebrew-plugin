@@ -28,7 +28,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Check out DictaBERT-Lex source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Resolve Elasticsearch version
         id: es
@@ -66,14 +66,14 @@ jobs:
 
       - name: Check out DictaBERT Tiny source
         if: github.event_name == 'workflow_dispatch' || steps.release.outputs.needs_build == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ env.TINY_BRANCH }}
           path: tiny-source
 
       - name: Set up Python
         if: github.event_name == 'workflow_dispatch' || steps.release.outputs.needs_build == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.9"
 
