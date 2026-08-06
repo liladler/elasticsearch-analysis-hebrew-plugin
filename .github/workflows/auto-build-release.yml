@@ -18,13 +18,17 @@ on:
 permissions:
   contents: write
 
+env:
+  TINY_BRANCH: dictabert-tiny
+
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out DictaBERT-Lex source
+        uses: actions/checkout@v4
 
       - name: Resolve Elasticsearch version
         id: es
@@ -39,39 +43,86 @@ jobs:
           echo "es_tag=${es_tag}" >> "$GITHUB_OUTPUT"
           echo "es_version=${es_version}" >> "$GITHUB_OUTPUT"
 
-      - name: Check if release already exists
-        if: github.event_name == 'schedule' || inputs.create_release == 'true'
-        id: exists
+      - name: Check release assets
+        id: release
+        env:
+          ES_TAG: ${{ steps.es.outputs.es_tag }}
+          ES_VERSION: ${{ steps.es.outputs.es_version }}
         run: |
-          if gh release view "${{ steps.es.outputs.es_tag }}" >/dev/null 2>&1; then
+          lex_asset="heb-lemmas-embedded-plugin-${ES_VERSION}.zip"
+          tiny_asset="heb-lemmas-embedded-tiny-plugin-${ES_VERSION}.zip"
+          if gh release view "${ES_TAG}" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
+            assets="$(gh release view "${ES_TAG}" --json assets --jq '.assets[].name')"
+            if [[ "${assets}" == *"${lex_asset}"* && "${assets}" == *"${tiny_asset}"* ]]; then
+              echo "needs_build=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "needs_build=true" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "needs_build=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Check out DictaBERT Tiny source
+        if: github.event_name == 'workflow_dispatch' || steps.release.outputs.needs_build == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TINY_BRANCH }}
+          path: tiny-source
+
       - name: Set up Python
-        if: github.event_name == 'workflow_dispatch' || steps.exists.outputs.exists == 'false'
+        if: github.event_name == 'workflow_dispatch' || steps.release.outputs.needs_build == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.9"
 
       - name: Install Python dependencies
-        if: github.event_name == 'workflow_dispatch' || steps.exists.outputs.exists == 'false'
+        if: github.event_name == 'workflow_dispatch' || steps.release.outputs.needs_build == 'true'
         run: |
           python -m pip install -U pip
           pip install -r hebrew-lemmatizer-embedded/model-export/requirements.txt
 
-      - name: Build plugin
-        if: github.event_name == 'workflow_dispatch' || steps.exists.outputs.exists == 'false'
+      - name: Build DictaBERT-Lex plugin
+        if: github.event_name == 'workflow_dispatch' || steps.release.outputs.needs_build == 'true'
         run: |
           ./scripts/build_plugin_linux.sh --es-version "${{ steps.es.outputs.es_version }}"
 
-      - name: Create release with assets
-        if: (github.event_name == 'schedule' || inputs.create_release == 'true') && steps.exists.outputs.exists == 'false'
+      - name: Build DictaBERT Tiny plugin
+        if: github.event_name == 'workflow_dispatch' || steps.release.outputs.needs_build == 'true'
+        env:
+          ES_VERSION: ${{ steps.es.outputs.es_version }}
         run: |
-          zip_path="hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-plugin-${{ steps.es.outputs.es_version }}.zip"
+          ./tiny-source/scripts/build_plugin_linux.sh --es-version "${ES_VERSION}"
+          tiny_source="tiny-source/hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-plugin-${ES_VERSION}.zip"
+          tiny_target="hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-tiny-plugin-${ES_VERSION}.zip"
+          cp "${tiny_source}" "${tiny_target}"
+
+      - name: Upload workflow artifacts
+        if: github.event_name == 'workflow_dispatch' || steps.release.outputs.needs_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hebrew-plugins-es-${{ steps.es.outputs.es_version }}
+          if-no-files-found: error
+          path: |
+            hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-plugin-${{ steps.es.outputs.es_version }}.zip
+            hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-tiny-plugin-${{ steps.es.outputs.es_version }}.zip
+
+      - name: Create or update release with both plugin variants
+        if: (github.event_name == 'schedule' || inputs.create_release == 'true') && (github.event_name == 'workflow_dispatch' || steps.release.outputs.needs_build == 'true')
+        env:
+          ES_TAG: ${{ steps.es.outputs.es_tag }}
+          ES_VERSION: ${{ steps.es.outputs.es_version }}
+          RELEASE_EXISTS: ${{ steps.release.outputs.exists }}
+        run: |
+          lex_zip="hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-plugin-${ES_VERSION}.zip"
+          tiny_zip="hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-tiny-plugin-${ES_VERSION}.zip"
           model_path="hebrew-lemmatizer-embedded/plugin-lemmas-embedded/src/main/resources/model/model.onnx"
-          gh release create "${{ steps.es.outputs.es_tag }}" \
-            "$zip_path" "$model_path" \
-            --title "Elasticsearch ${{ steps.es.outputs.es_version }} plugin" \
-            --notes "Embedded Hebrew analyzer plugin for ES ${{ steps.es.outputs.es_version }} (INT8 ONNX)."
+          if [[ "${RELEASE_EXISTS}" == "true" ]]; then
+            gh release upload "${ES_TAG}" "${lex_zip}" "${tiny_zip}" "${model_path}" --clobber
+          else
+            gh release create "${ES_TAG}" \
+              "${lex_zip}" "${tiny_zip}" "${model_path}" \
+              --title "Elasticsearch ${ES_VERSION} plugins" \
+              --notes "Embedded Hebrew analyzer plugins for ES ${ES_VERSION}: DictaBERT-Lex and the higher-throughput DictaBERT Tiny alternative."
+          fi

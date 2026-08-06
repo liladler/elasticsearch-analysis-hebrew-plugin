@@ -13,6 +13,31 @@ This repo is a **fork** focused on an embedded, optimized Hebrew analyzer for El
 - Stopwords included **in the same plugin** (`heb_stopwords`)
 - ES 9.x classic plugin with entitlements
 
+## Choose between Lex and Tiny
+
+The repository provides two alternative builds with the same analyzer behavior,
+plugin name, ONNX Runtime 1.26 integration, Top-3 output optimization, startup
+validation, and content-addressed model cache. Install **one** of them on every
+node; the two ZIPs are alternatives and cannot be installed side by side.
+
+| Variant | Source branch | Public Hebrew UD exact accuracy | 35-document bulk, c8 | 100-document bulk, c8 | Best fit |
+| --- | --- | ---: | ---: | ---: | --- |
+| DictaBERT-Lex | `main` | 88.791% (5,117/5,763) | 50.3 docs/s | 51.8 docs/s | Default when lemma quality is the priority |
+| DictaBERT Tiny, per-channel INT8 | [`dictabert-tiny`](https://github.com/liladler/elasticsearch-analysis-hebrew-plugin/tree/dictabert-tiny) | 87.992% (5,071/5,763) | 181.4 docs/s | 184.2 docs/s | High-throughput indexing where the measured quality tradeoff is acceptable |
+
+In this test Tiny was about 3.6x faster, while Lex was 0.80 percentage
+points more accurate. Throughput was measured locally on ES 9.4.4 with an
+8-vCPU, 4-GB Docker container, a 2-GB heap, 10 lines per document, and
+concurrency 8. Treat these numbers as a relative comparison, not a production
+capacity guarantee, and validate accuracy on a representative corpus.
+
+### Release downloads for ES 9.4.4
+
+- [DictaBERT-Lex plugin](https://github.com/liladler/elasticsearch-analysis-hebrew-plugin/releases/download/v9.4.4/heb-lemmas-embedded-plugin-9.4.4.zip)
+- [DictaBERT Tiny plugin](https://github.com/liladler/elasticsearch-analysis-hebrew-plugin/releases/download/v9.4.4/heb-lemmas-embedded-tiny-plugin-9.4.4.zip)
+
+Each release uses the same two filename patterns with its Elasticsearch version.
+
 ## Build
 
 Prerequisites:
@@ -51,6 +76,10 @@ Output:
 ```
 hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-plugin-<ES_VERSION>.zip
 ```
+
+The automated release workflow builds this Lex artifact from `main` and the
+corresponding `heb-lemmas-embedded-tiny-plugin-<ES_VERSION>.zip` artifact from
+the `dictabert-tiny` branch.
 
 ## Install & test (local ES)
 
