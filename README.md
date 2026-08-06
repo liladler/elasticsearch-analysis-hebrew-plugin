@@ -23,13 +23,36 @@ node; the two ZIPs are alternatives and cannot be installed side by side.
 | Variant | Source branch | Public Hebrew UD exact accuracy | 35-document bulk, c8 | 100-document bulk, c8 | Best fit |
 | --- | --- | ---: | ---: | ---: | --- |
 | DictaBERT-Lex | `main` | 88.791% (5,117/5,763) | 50.3 docs/s | 51.8 docs/s | Default when lemma quality is the priority |
-| DictaBERT Tiny, per-channel INT8 | [`dictabert-tiny`](https://github.com/liladler/elasticsearch-analysis-hebrew-plugin/tree/dictabert-tiny) | 87.992% (5,071/5,763) | 181.4 docs/s | 184.2 docs/s | High-throughput indexing where the measured quality tradeoff is acceptable |
+| DictaBERT Tiny, per-channel INT8 | [`dictabert-tiny`](https://github.com/liladler/elasticsearch-analysis-hebrew-plugin/tree/dictabert-tiny) | 87.992% (5,071/5,763) | 181.4 docs/s | 184.2 docs/s | High-throughput indexing after corpus-specific quality validation |
 
-In this test Tiny was about 3.6x faster, while Lex was 0.80 percentage
-points more accurate. Throughput was measured locally on ES 9.4.4 with an
-8-vCPU, 4-GB Docker container, a 2-GB heap, 10 lines per document, and
-concurrency 8. Treat these numbers as a relative comparison, not a production
-capacity guarantee, and validate accuracy on a representative corpus.
+In this test Tiny was about 3.6x faster. Its overall exact accuracy was 0.80
+percentage points lower, but that aggregate understates the difference on tokens
+that actually need lemmatization:
+
+| Public Hebrew UD subset | Tokens | DictaBERT-Lex | DictaBERT Tiny | Lex advantage |
+| --- | ---: | ---: | ---: | ---: |
+| All scored tokens | 5,763 | 88.791% (5,117) | 87.992% (5,071) | 0.80 points |
+| Lemma differs from surface form | 1,439 | 75.191% (1,082) | 72.481% (1,043) | 2.71 points |
+| Lemma equals surface form | 4,324 | 93.316% (4,035) | 93.154% (4,028) | 0.16 points |
+
+The two variants disagreed on 307 scored tokens. Lex alone was correct in 116
+of those cases, Tiny alone was correct in 70, and both were wrong with different
+predictions in 121. The net difference is 46 correct tokens: Tiny made 692
+exact-match errors versus Lex's 646, or 7.1% more errors overall. On the 1,439 tokens
+whose gold lemma differed from the surface form, Tiny made 396 errors versus
+Lex's 357, or 10.9% more.
+
+These quality figures are an end-to-end plugin comparison on one public corpus,
+including the shared Top-3 candidate-selection behavior. They are not raw model
+accuracy or a guarantee for customer text. Of 8,827 surface tokens in the test,
+5,763 had a directly aligned gold lemma and were scored; UD multiword surface
+tokens without a direct gold alignment were excluded. Validate both variants on
+a representative corpus, especially domain terms, proper names, and inflected
+tokens.
+
+Throughput was measured locally on ES 9.4.4 with an 8-vCPU, 4-GB Docker
+container, a 2-GB heap, 10 lines per document, and concurrency 8. Treat it as a
+relative comparison, not a production capacity guarantee.
 
 ### Release downloads for ES 9.4.4
 
