@@ -12,6 +12,7 @@ This script:
 import os
 import shutil
 import json
+import hashlib
 from pathlib import Path
 
 import torch
@@ -23,6 +24,16 @@ from onnx import TensorProto, helper
 
 MODEL_NAME = "dicta-il/dictabert-lex"
 OUTPUT_DIR = Path(__file__).parent.parent / "plugin-lemmas-embedded" / "src" / "main" / "resources" / "model"
+
+
+def calculate_cache_key(*paths: Path) -> str:
+    """Build a content key so cached model resources cannot survive an incompatible upgrade."""
+    digest = hashlib.sha256()
+    for path in paths:
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    return digest.hexdigest()
 
 
 def add_topk_output(input_path: Path, output_path: Path, k: int = 3):
@@ -136,6 +147,11 @@ def export_model():
         print("Adding sorted top-three output to the ONNX graph")
         add_topk_output(quantized_file, output_model)
         print(f"Saved quantized ONNX model to {output_model}")
+
+        cache_key = calculate_cache_key(output_model, tokenizer_path)
+        cache_key_path = OUTPUT_DIR / "model-cache-key.txt"
+        cache_key_path.write_text(cache_key + "\n", encoding="utf-8")
+        print(f"Saved model cache key to {cache_key_path}")
         
     finally:
         # Cleanup temp directory
