@@ -3,7 +3,7 @@
 // Target: Elasticsearch 9.2.4 (override with -P properties)
 
 ext.elasticsearchVersion = project.findProperty('elasticsearchVersion') ?: '9.2.4'
-ext.onnxRuntimeVersion = project.findProperty('onnxRuntimeVersion') ?: '1.19.2'
+ext.onnxRuntimeVersion = project.findProperty('onnxRuntimeVersion') ?: '1.26.0'
 
 buildscript {
     ext.elasticsearchVersion = project.findProperty('elasticsearchVersion') ?: '9.2.4'

@@ -39,6 +39,7 @@ public class OnnxLemmatizer implements AutoCloseable {
     private static final int HEBREW_START = 0x0590;
     private static final int HEBREW_END = 0x05FF;
     private static final int HEBREW_RANGE = HEBREW_END - HEBREW_START + 1;
+    private static final int PREDICTIONS_PER_TOKEN = 3;
 
     private OnnxLemmatizer(Path modelDir) throws OrtException, IOException {
         HebDebugger.log("Initializing OnnxLemmatizer from: " + modelDir);
@@ -102,7 +103,7 @@ public class OnnxLemmatizer implements AutoCloseable {
             tokenTypeIds[0][i] = 0;
         }
 
-        float[][] logits = runInference(inputIds, attentionMask, tokenTypeIds);
+        long[][] topPredictions = runInference(inputIds, attentionMask, tokenTypeIds);
 
         List<String> lemmas = new ArrayList<>();
         int logitIdx = 1;
@@ -110,9 +111,8 @@ public class OnnxLemmatizer implements AutoCloseable {
         for (int i = 0; i < tokens.size(); i++) {
             int[] wpIds = wordPieceIds.get(i);
             String originalToken = tokens.get(i);
-            if (logitIdx < logits.length) {
-                int[] topK = getTopK(logits[logitIdx], 3);
-                lemmas.add(selectBestLemma(originalToken, topK));
+            if (logitIdx < topPredictions.length) {
+                lemmas.add(selectBestLemma(originalToken, topPredictions[logitIdx]));
             } else {
                 lemmas.add(originalToken);
             }
@@ -122,7 +122,7 @@ public class OnnxLemmatizer implements AutoCloseable {
         return lemmas;
     }
 
-    private float[][] runInference(long[][] inputIds, long[][] attentionMask, long[][] tokenTypeIds)
+    private long[][] runInference(long[][] inputIds, long[][] attentionMask, long[][] tokenTypeIds)
             throws OrtException {
         try (OnnxTensor idsTensor = OnnxTensor.createTensor(env, inputIds);
              OnnxTensor maskTensor = OnnxTensor.createTensor(env, attentionMask);
@@ -137,8 +137,8 @@ public class OnnxLemmatizer implements AutoCloseable {
                 OnnxValue output = results.get(0);
                 if (output instanceof OnnxTensor tensor) {
                     long[] shape = tensor.getInfo().getShape();
-                    if (shape.length == 3) {
-                        float[][][] data = (float[][][]) tensor.getValue();
+                    if (shape.length == 3 && shape[2] == PREDICTIONS_PER_TOKEN) {
+                        long[][][] data = (long[][][]) tensor.getValue();
                         return data[0];
                     }
                 }
@@ -147,32 +147,7 @@ public class OnnxLemmatizer implements AutoCloseable {
         }
     }
 
-    private int[] getTopK(float[] scores, int k) {
-        int[] topK = new int[k];
-        float[] topVals = new float[k];
-        for (int i = 0; i < k; i++) {
-            topVals[i] = Float.NEGATIVE_INFINITY;
-            topK[i] = -1;
-        }
-
-        for (int idx = 0; idx < scores.length; idx++) {
-            float score = scores[idx];
-            for (int pos = 0; pos < k; pos++) {
-                if (score > topVals[pos]) {
-                    for (int shift = k - 1; shift > pos; shift--) {
-                        topVals[shift] = topVals[shift - 1];
-                        topK[shift] = topK[shift - 1];
-                    }
-                    topVals[pos] = score;
-                    topK[pos] = idx;
-                    break;
-                }
-            }
-        }
-        return topK;
-    }
-
-    private String selectBestLemma(String originalToken, int[] topK) {
+    private String selectBestLemma(String originalToken, long[] topK) {
         boolean[] significantHebrew = new boolean[HEBREW_RANGE];
         int significantCount = 0;
         Set<Character> extraSignificant = null;
@@ -197,7 +172,8 @@ public class OnnxLemmatizer implements AutoCloseable {
             }
         }
 
-        for (int predId : topK) {
+        for (long predictedId : topK) {
+            int predId = Math.toIntExact(predictedId);
             if (predId < 0 || predId >= vocab.length) {
                 continue;
             }

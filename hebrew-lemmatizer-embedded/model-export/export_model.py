@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Export DictaBERT-tiny-joint model to ONNX format for the Hebrew Lemmatizer plugin.
+Export DictaBERT-Lex to ONNX format for the Hebrew Lemmatizer plugin.
 
 This script:
 1. Downloads the dicta-il/dictabert-lex model from HuggingFace
-2. Converts it to ONNX format with FP16 optimization
-3. Copies the tokenizer.json for use by the Java plugin
+2. Converts it to ONNX format with INT8 weight quantization
+3. Replaces the full logits output with the sorted top-three token IDs
+4. Copies the tokenizer.json for use by the Java plugin
 """
 
 import os
@@ -17,9 +18,48 @@ import torch
 from transformers import AutoTokenizer, AutoModelForMaskedLM
 from optimum.onnxruntime import ORTModelForMaskedLM
 from onnxruntime.quantization import quantize_dynamic, QuantType
+import onnx
+from onnx import TensorProto, helper
 
 MODEL_NAME = "dicta-il/dictabert-lex"
 OUTPUT_DIR = Path(__file__).parent.parent / "plugin-lemmas-embedded" / "src" / "main" / "resources" / "model"
+
+
+def add_topk_output(input_path: Path, output_path: Path, k: int = 3):
+    """Keep model predictions identical while avoiding a huge logits transfer to Java."""
+    model = onnx.load(str(input_path))
+    if len(model.graph.output) != 1:
+        raise ValueError("Expected the exported model to have exactly one logits output")
+
+    logits_name = model.graph.output[0].name
+    k_name = "lemma_topk_k"
+    values_name = "lemma_topk_values"
+    indices_name = "lemma_topk_indices"
+
+    model.graph.initializer.append(
+        helper.make_tensor(k_name, TensorProto.INT64, [1], [k])
+    )
+    model.graph.node.append(
+        helper.make_node(
+            "TopK",
+            inputs=[logits_name, k_name],
+            outputs=[values_name, indices_name],
+            name="LemmaTopK",
+            axis=-1,
+            largest=1,
+            sorted=1,
+        )
+    )
+    del model.graph.output[:]
+    model.graph.output.append(
+        helper.make_tensor_value_info(
+            indices_name,
+            TensorProto.INT64,
+            ["batch_size", "sequence_length", k],
+        )
+    )
+    onnx.checker.check_model(model)
+    onnx.save(model, str(output_path))
 
 
 def export_model():
@@ -90,9 +130,12 @@ def export_model():
         print(f"Quantizing ONNX model to INT8: {quantized_file}")
         quantize_dynamic(str(onnx_file), str(quantized_file), weight_type=QuantType.QInt8)
 
-        # Copy quantized model into plugin resources
-        shutil.copy(quantized_file, OUTPUT_DIR / "model.onnx")
-        print(f"Saved quantized ONNX model to {OUTPUT_DIR / 'model.onnx'}")
+        # Return only the top-three IDs. The Java filter never uses the remaining
+        # logits, and exporting them creates a large native-to-heap copy per field.
+        output_model = OUTPUT_DIR / "model.onnx"
+        print("Adding sorted top-three output to the ONNX graph")
+        add_topk_output(quantized_file, output_model)
+        print(f"Saved quantized ONNX model to {output_model}")
         
     finally:
         # Cleanup temp directory
@@ -159,19 +202,14 @@ def test_model():
     
     print(f"Output shape: {outputs[0].shape}")
     
-    # Get top prediction for the word
-    import numpy as np
-    logits = outputs[0][0]  # First batch
-    
+    top_predictions = outputs[0][0]  # First batch
+
     # Get predictions for position 1 (first token after [CLS])
-    if len(logits) > 1:
-        token_logits = logits[1]
-        top_ids = np.argsort(token_logits)[-5:][::-1]
-        
-        print("Top 5 predictions:")
-        for idx in top_ids:
+    if len(top_predictions) > 1:
+        print("Top 3 predictions:")
+        for idx in top_predictions[1]:
             token = tokenizer.decode([idx])
-            print(f"  {idx}: {token} ({token_logits[idx]:.2f})")
+            print(f"  {idx}: {token}")
     
     print("\nTest completed successfully!")
 
