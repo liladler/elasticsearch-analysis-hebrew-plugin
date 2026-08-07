@@ -75,13 +75,17 @@ jobs:
         if: github.event_name == 'workflow_dispatch' || steps.release.outputs.needs_build == 'true'
         uses: actions/setup-python@v6
         with:
-          python-version: "3.9"
+          # onnxruntime 1.26 requires Python 3.11 or newer.
+          python-version: "3.12"
 
       - name: Install Python dependencies
         if: github.event_name == 'workflow_dispatch' || steps.release.outputs.needs_build == 'true'
         run: |
           python -m pip install -U pip
           pip install -r hebrew-lemmatizer-embedded/model-export/requirements.txt
+          # Tiny pins its own export dependencies; do not rely on the Lex list
+          # happening to be a superset of them.
+          pip install -r tiny-source/hebrew-lemmatizer-embedded/model-export/requirements.txt
 
       - name: Build DictaBERT-Lex plugin
         if: github.event_name == 'workflow_dispatch' || steps.release.outputs.needs_build == 'true'
@@ -117,12 +121,33 @@ jobs:
         run: |
           lex_zip="hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-plugin-${ES_VERSION}.zip"
           tiny_zip="hebrew-lemmatizer-embedded/plugin-lemmas-embedded/build/distributions/heb-lemmas-embedded-tiny-plugin-${ES_VERSION}.zip"
-          model_path="hebrew-lemmatizer-embedded/plugin-lemmas-embedded/src/main/resources/model/model.onnx"
+          # Each variant has its own model, and each plugin build verifies the
+          # model against its committed model-cache-key.txt. Publish both under
+          # distinct names so they cannot be mixed up.
+          model_dir="release-models"
+          mkdir -p "${model_dir}"
+          cp "hebrew-lemmatizer-embedded/plugin-lemmas-embedded/src/main/resources/model/model.onnx" \
+            "${model_dir}/model-lex.onnx"
+          cp "tiny-source/hebrew-lemmatizer-embedded/plugin-lemmas-embedded/src/main/resources/model/model.onnx" \
+            "${model_dir}/model-tiny.onnx"
           if [[ "${RELEASE_EXISTS}" == "true" ]]; then
-            gh release upload "${ES_TAG}" "${lex_zip}" "${tiny_zip}" "${model_path}" --clobber
+            gh release upload "${ES_TAG}" \
+              "${lex_zip}" "${tiny_zip}" \
+              "${model_dir}/model-lex.onnx" "${model_dir}/model-tiny.onnx" --clobber
           else
+            notes_file="release-notes.md"
+            {
+              echo "Embedded Hebrew analyzer plugins for ES ${ES_VERSION}: DictaBERT-Lex and the higher-throughput DictaBERT Tiny alternative."
+              echo
+              echo "- \`heb-lemmas-embedded-plugin-${ES_VERSION}.zip\` - DictaBERT-Lex variant (standalone model: \`model-lex.onnx\`)"
+              echo "- \`heb-lemmas-embedded-tiny-plugin-${ES_VERSION}.zip\` - DictaBERT Tiny variant (standalone model: \`model-tiny.onnx\`)"
+              echo
+              echo "Both zips already embed their model; the standalone \`.onnx\` assets are only needed for local builds and must match the \`model-cache-key.txt\` of the matching branch."
+              echo "Both variants install under the same plugin id, so only one can be installed per node - run \`elasticsearch-plugin remove heb-lemmas-embedded-plugin\` before switching variants."
+            } > "${notes_file}"
             gh release create "${ES_TAG}" \
-              "${lex_zip}" "${tiny_zip}" "${model_path}" \
+              "${lex_zip}" "${tiny_zip}" \
+              "${model_dir}/model-lex.onnx" "${model_dir}/model-tiny.onnx" \
               --title "Elasticsearch ${ES_VERSION} plugins" \
-              --notes "Embedded Hebrew analyzer plugins for ES ${ES_VERSION}: DictaBERT-Lex and the higher-throughput DictaBERT Tiny alternative."
+              --notes-file "${notes_file}"
           fi
