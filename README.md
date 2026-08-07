@@ -15,40 +15,36 @@ This repo is a **fork** focused on an embedded, optimized Hebrew analyzer for El
 
 ## Choose between Lex and Tiny
 
-The repository provides two alternative builds with the same analyzer behavior,
+The repository provides two alternative builds with the same analyzer API,
 plugin name, ONNX Runtime 1.26 integration, Top-3 output optimization, startup
-validation, and content-addressed model cache. Install **one** of them on every
-node; the two ZIPs are alternatives and cannot be installed side by side.
+validation, and content-addressed model cache. Their lemma predictions are not
+equivalent. Install **one** of them on every node; the two ZIPs are alternatives
+and cannot be installed side by side.
 
-| Variant | Source branch | Public Hebrew UD exact accuracy | 35-document bulk, c8 | 100-document bulk, c8 | Best fit |
-| --- | --- | ---: | ---: | ---: | --- |
-| DictaBERT-Lex | `main` | 88.791% (5,117/5,763) | 50.3 docs/s | 51.8 docs/s | Default when lemma quality is the priority |
-| DictaBERT Tiny, per-channel INT8 | [`dictabert-tiny`](https://github.com/liladler/elasticsearch-analysis-hebrew-plugin/tree/dictabert-tiny) | 87.992% (5,071/5,763) | 181.4 docs/s | 184.2 docs/s | High-throughput indexing after corpus-specific quality validation |
+> **Direct output comparison:** Across 8,827 surface tokens from the public
+> Hebrew UD test text, Lex and Tiny emitted the same lemma for **8,121 tokens
+> (92.0%)** and different lemmas for **706 tokens (8.0%)**. In other words,
+> switching models changed about **1 in 12 lemma outputs** in this test. This is
+> an output-disagreement measurement, not an accuracy score: it does not use the
+> corpus's gold labels and does not say which model is correct when they differ.
 
-In this test Tiny was about 3.6x faster. Its overall exact accuracy was 0.80
-percentage points lower, but that aggregate understates the difference on tokens
-that actually need lemmatization:
+| Variant | Source branch | 35-document bulk, c8 | 100-document bulk, c8 | Best fit |
+| --- | --- | ---: | ---: | --- |
+| DictaBERT-Lex | `main` | 50.3 docs/s | 51.8 docs/s | Larger model when lemma quality is the priority and has been validated on representative text |
+| DictaBERT Tiny, per-channel INT8 | [`dictabert-tiny`](https://github.com/liladler/elasticsearch-analysis-hebrew-plugin/tree/dictabert-tiny) | 181.4 docs/s | 184.2 docs/s | Throughput-first indexing after reviewing the model's different outputs on representative text |
 
-| Public Hebrew UD subset | Tokens | DictaBERT-Lex | DictaBERT Tiny | Lex advantage |
-| --- | ---: | ---: | ---: | ---: |
-| All scored tokens | 5,763 | 88.791% (5,117) | 87.992% (5,071) | 0.80 points |
-| Lemma differs from surface form | 1,439 | 75.191% (1,082) | 72.481% (1,043) | 2.71 points |
-| Lemma equals surface form | 4,324 | 93.316% (4,035) | 93.154% (4,028) | 0.16 points |
+| Lex compared with Tiny | Tokens | Share |
+| --- | ---: | ---: |
+| Same lemma output | 8,121 | 92.0% |
+| Different lemma output | 706 | 8.0% |
+| Total compared | 8,827 | 100.0% |
 
-The two variants disagreed on 307 scored tokens. Lex alone was correct in 116
-of those cases, Tiny alone was correct in 70, and both were wrong with different
-predictions in 121. The net difference is 46 correct tokens: Tiny made 692
-exact-match errors versus Lex's 646, or 7.1% more errors overall. On the 1,439 tokens
-whose gold lemma differed from the surface form, Tiny made 396 errors versus
-Lex's 357, or 10.9% more.
-
-These quality figures are an end-to-end plugin comparison on one public corpus,
-including the shared Top-3 candidate-selection behavior. They are not raw model
-accuracy or a guarantee for customer text. Of 8,827 surface tokens in the test,
-5,763 had a directly aligned gold lemma and were scored; UD multiword surface
-tokens without a direct gold alignment were excluded. Validate both variants on
-a representative corpus, especially domain terms, proper names, and inflected
-tokens.
+In this test Tiny was about 3.6x faster, but its output was not interchangeable
+with Lex: the models produced different indexed lemmas for 8.0% of tokens. Do
+not interpret 92.0% agreement as 92.0% accuracy, or the 8.0% disagreement as an
+8.0% Tiny error rate. Review the disagreement examples and validate both
+variants on representative text, especially domain terms, proper names, and
+inflected tokens, before choosing between them.
 
 Throughput was measured locally on ES 9.4.4 with an 8-vCPU, 4-GB Docker
 container, a 2-GB heap, 10 lines per document, and concurrency 8. Treat it as a
@@ -60,6 +56,44 @@ relative comparison, not a production capacity guarantee.
 - [DictaBERT Tiny plugin](https://github.com/liladler/elasticsearch-analysis-hebrew-plugin/releases/download/v9.4.4/heb-lemmas-embedded-tiny-plugin-9.4.4.zip)
 
 Each release uses the same two filename patterns with its Elasticsearch version.
+
+### Uploading the Lex plugin to Elastic Cloud
+
+The DictaBERT-Lex plugin ZIP is larger than the Elastic Cloud UI's 200 MB
+upload limit. Create it through the Elastic Cloud Extensions API using a
+direct, publicly accessible download URL instead:
+
+First, create an [Elastic Cloud API key](https://www.elastic.co/docs/deploy-manage/api-keys/elastic-cloud-api-keys)
+from **Organization > API keys** in the Elastic Cloud Console. The key needs a
+role that can manage the target hosted deployment. Store it in
+`CLOUD_API_KEY`; this is a Cloud organization key, not an Elasticsearch API
+key created inside the deployment.
+
+```bash
+ES_VERSION=9.4.3
+
+curl --fail-with-body --silent --show-error --request POST \
+  'https://api.elastic-cloud.com/api/v1/deployments/extensions' \
+  --header "Authorization: ApiKey $CLOUD_API_KEY" \
+  --header 'Content-Type: application/json' \
+  --data "{\
+    \"name\": \"heb-lemmas-embedded-plugin\",\
+    \"extension_type\": \"plugin\",\
+    \"version\": \"${ES_VERSION}\",\
+    \"description\": \"DictaBERT-Lex Hebrew analyzer (heb_lemmas + heb_stopwords), ES ${ES_VERSION}\",\
+    \"download_url\": \"$(curl --fail --silent --show-error --output /dev/null --write-out '%{redirect_url}' "https://github.com/liladler/elasticsearch-analysis-hebrew-plugin/releases/download/v${ES_VERSION}/heb-lemmas-embedded-plugin-${ES_VERSION}.zip")\"\
+  }"
+```
+
+Set `ES_VERSION` once to the version being installed. It must exactly match both
+the target Elasticsearch version and the value in the plugin's
+`plugin-descriptor.properties`. The nested `curl` resolves the GitHub release
+redirect and passes its direct download URL to Elastic Cloud. The resolved URL
+is temporary, so run the complete command together as shown. The API-created
+extension can then be selected from the deployment's Extensions page.
+
+See Elastic's [Extensions API documentation](https://www.elastic.co/docs/deploy-manage/deploy/elastic-cloud/manage-plugins-extensions-through-api)
+for listing, updating, and attaching extensions to deployment plans.
 
 ## Build
 
