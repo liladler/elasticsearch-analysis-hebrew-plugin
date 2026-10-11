@@ -117,6 +117,65 @@ curl -k -u "elastic:<password>" -X PUT "https://localhost:9200/hebrew_test" \
   }'
 ```
 
+## Bug fixes and upgrading
+
+**No breaking changes.** The plugin name, filter names, settings, mappings and APIs are unchanged,
+and the new `preserve_mixed_tokens` setting is off by default, so a new zip is a drop-in
+replacement. These fixes are also backported to the earlier releases of this plugin.
+
+**We recommend reindexing after upgrading.** The fixes change the terms produced for inputs that
+were previously handled wrongly. Documents already indexed keep their old terms, while queries are
+analyzed with the fixed filter, so affected tokens can miss until the data is reindexed. Inputs
+without any of the cases below are not affected.
+
+| Fixed | Before | After |
+| --- | --- | --- |
+| `heb_lemmas` inside a `condition` filter lost the tokens that skip the condition | `condition` over "הילדים אוכלים את הבננות בגן" returned 4 tokens, `את` was dropped | all 5 tokens are returned |
+| Hebrew with niqqud or cantillation marks collapsed to one letter | `שְׁלוֹם` became `ש` | `שְׁלוֹם` becomes `שלום` |
+| Values longer than 510 word pieces were indexed without any lemmatization, silently | 511 words: no lemmas | long values are split into windows (at sentence ends where possible) and fully lemmatized |
+| `keyword_marker` before `heb_lemmas` was ignored | the keyword was lemmatized and lost its keyword flag | the token is kept unchanged and stays flagged |
+| `positionLength` was reset to 1 | graph filters before `heb_lemmas` (for example `synonym_graph`) lost multi-word paths | `positionLength` is preserved |
+
+### Keeping numbers, codes and Latin text: `preserve_mixed_tokens`
+
+By default a token is lemmatized as a whole and only the first Hebrew word survives, so values
+such as `אלף-7` or `יחידה-8200` lose their number and `אלף-7` and `אלף-9` become the same term.
+Enable the setting on the filter to lemmatize only the Hebrew words and keep the rest:
+
+```json
+"filter": {
+  "heb_lemmas_keep": { "type": "heb_lemmas", "preserve_mixed_tokens": true }
+},
+"analyzer": {
+  "hebrew_analyzer": {
+    "tokenizer": "whitespace",
+    "filter": ["heb_lemmas_keep", "heb_stopwords"]
+  }
+}
+```
+
+| Token | Default | `preserve_mixed_tokens: true` |
+| --- | --- | --- |
+| `אלף-7` | `אלף` | `אלף-7` |
+| `יחידה-8200` | `יחידה` | `יחידה-8200` |
+| `בן-גוריון` | `בן` | `בן-גוריון` |
+| `קריית-שמונה` | `קריה` | `קריה-שמונה` |
+| `12/05/2024` | `12` | `12/05/2024` |
+| `iPhone` | `i` | `iPhone` |
+| `הילדים.` | `ילד` | `ילד` (edge punctuation is still dropped) |
+
+Tokens without any Hebrew letter are not sent to the model at all. The setting is off by default
+because it changes the terms of existing values; set it when you create a new index.
+
+To keep specific tokens untouched, put a `keyword_marker` before `heb_lemmas`, for example to keep
+every token that contains a digit, a Latin letter, a slash or a hyphen:
+
+```json
+"filter": {
+  "keep_codes": { "type": "keyword_marker", "keywords_pattern": ".*[0-9A-Za-z/\\-].*" }
+}
+```
+
 ## Upgrade to a newer ES version (e.g., 9.3)
 
 1. Run `./scripts/build_plugin_linux.sh --es-version <ES>`
