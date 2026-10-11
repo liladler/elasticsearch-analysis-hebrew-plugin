@@ -136,27 +136,20 @@ public class OnnxLemmatizer implements AutoCloseable {
     /**
      * Lemmatizes the tokens of one field value.
      *
+     * <p>Only the Hebrew words inside a token are lemmatized. Digits, Latin text and separators
+     * between words are kept, so "אלף-7" stays "אלף-7" (lemmatizing the whole token would keep only
+     * "אלף" and lose the number), and a token without any Hebrew letter is returned unchanged
+     * without going through the model. Punctuation at the edges of a token is dropped.
+     *
      * <p>The model accepts at most {@value #MAX_SEQUENCE_LENGTH} positions, two of which are the
-     * [CLS] and [SEP] markers. Values that fit are lemmatized in a single call, exactly as before.
-     * Longer values are split into windows of at most {@value #MAX_PIECES_PER_WINDOW} word pieces,
-     * preferring to end a window after a sentence-ending token, so every token still gets a lemma
-     * instead of the whole value silently being left as is.
+     * [CLS] and [SEP] markers. Values that fit are lemmatized in a single call. Longer values are
+     * split into windows of at most {@value #MAX_PIECES_PER_WINDOW} word pieces, preferring to end
+     * a window after a sentence-ending token, so every token still gets a lemma instead of the
+     * whole value silently being left as is.
      */
     public List<String> lemmatize(List<String> tokens) throws OrtException {
-        return lemmatize(tokens, false);
-    }
-
-    /**
-     * @param preserveMixedTokens when true, only the Hebrew words inside a token are lemmatized and
-     *     numbers, Latin text and separators are kept ("אלף-7" stays "אלף-7"); tokens without any
-     *     Hebrew letter skip the model. When false the whole token is lemmatized as before.
-     */
-    public List<String> lemmatize(List<String> tokens, boolean preserveMixedTokens) throws OrtException {
         if (tokens == null || tokens.isEmpty()) {
             return Collections.emptyList();
-        }
-        if (preserveMixedTokens == false) {
-            return lemmatizeWords(tokens, tokens);
         }
 
         // Each Hebrew word of each token becomes one model word; the rest of the token is kept.
