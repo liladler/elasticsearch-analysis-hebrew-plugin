@@ -40,7 +40,6 @@ public class HebTokenFilter extends TokenFilter {
     private final List<Boolean> keywordList = new ArrayList<>();
     private final LemmatizerProvider lemmatizerProvider;
     private final Path dataPath;
-    private final boolean preserveMixedTokens;
     private boolean initialized = false;
     // Set once upstream has reported the end of the stream. TokenStream consumers must not be
     // read again after that, and doing so loses tokens inside delegating filters such as ES's
@@ -48,21 +47,15 @@ public class HebTokenFilter extends TokenFilter {
     private boolean inputExhausted;
 
     HebTokenFilter(TokenStream input, Path dataPath) {
-        this(input, dataPath, false);
-    }
-
-    HebTokenFilter(TokenStream input, Path dataPath, boolean preserveMixedTokens) {
         super(input);
         this.lemmatizerProvider = null;
         this.dataPath = dataPath;
-        this.preserveMixedTokens = preserveMixedTokens;
     }
 
     HebTokenFilter(TokenStream input, LemmatizerProvider lemmatizerProvider) {
         super(input);
         this.lemmatizerProvider = lemmatizerProvider;
         this.dataPath = null;
-        this.preserveMixedTokens = false;
     }
 
     private void initializeLemmatizer() throws IOException {
@@ -136,7 +129,7 @@ public class HebTokenFilter extends TokenFilter {
                     ? new ArrayList<>(tokenList)
                     : lemmatizerProvider != null
                             ? lemmatizerProvider.lemmatize(tokenList)
-                            : lemmatizer.lemmatize(tokenList, preserveMixedTokens);
+                            : lemmatizer.lemmatize(tokenList);
             lemmaIndex = 0;
         } catch (Exception e) {
             debugger.debugPrint("Lemmatization error: " + e.getMessage());

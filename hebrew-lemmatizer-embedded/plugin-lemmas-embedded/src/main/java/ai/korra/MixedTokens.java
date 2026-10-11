@@ -7,9 +7,9 @@ import java.util.List;
  * Splits a token into its Hebrew words and everything else, so that only the Hebrew words are
  * lemmatized and the rest (numbers, Latin text, hyphens between words) is kept.
  *
- * <p>Used when {@code preserve_mixed_tokens} is enabled. Without it a value such as {@code אלף-7}
- * is lemmatized as a whole and comes out as {@code אלף}: the number is silently lost, so
- * {@code אלף-7} and {@code אלף-9} become the same term.
+ * <p>Lemmatizing a whole token such as {@code אלף-7} keeps only the first Hebrew word, so it
+ * comes out as {@code אלף}: the number is silently lost and {@code אלף-7} and {@code אלף-9}
+ * become the same term.
  */
 final class MixedTokens {
 

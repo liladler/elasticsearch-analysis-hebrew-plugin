@@ -187,14 +187,14 @@ curl -k -u "elastic:<password>" -X PUT "https://localhost:9200/hebrew_test" \
 
 ## Bug fixes and upgrading
 
-**No breaking changes.** The plugin name, filter names, settings, mappings and APIs are unchanged,
-and the new `preserve_mixed_tokens` setting is off by default, so a new zip is a drop-in
-replacement. These fixes are also backported to the earlier releases of this plugin.
+These are bug fixes, and they are also included in the earlier releases of this plugin. There are
+no changes to the API, settings, mappings or filter names, so a new zip is a drop-in replacement.
 
-**We recommend reindexing after upgrading.** The fixes change the terms produced for inputs that
-were previously handled wrongly. Documents already indexed keep their old terms, while queries are
-analyzed with the fixed filter, so affected tokens can miss until the data is reindexed. Inputs
-without any of the cases below are not affected.
+**We recommend reindexing your data after upgrading.** Because the fixes are backported, they
+change the terms produced for inputs that were previously handled wrongly. Documents that are
+already indexed keep their old terms, while queries are analyzed with the fixed filter, so the
+affected tokens can miss until the data is reindexed. Inputs that do not hit any of the cases
+below are not affected.
 
 | Fixed | Before | After |
 | --- | --- | --- |
@@ -203,26 +203,15 @@ without any of the cases below are not affected.
 | Values longer than 510 word pieces were indexed without any lemmatization, silently | 511 words: no lemmas | long values are split into windows (at sentence ends where possible) and fully lemmatized |
 | `keyword_marker` before `heb_lemmas` was ignored | the keyword was lemmatized and lost its keyword flag | the token is kept unchanged and stays flagged |
 | `positionLength` was reset to 1 | graph filters before `heb_lemmas` (for example `synonym_graph`) lost multi-word paths | `positionLength` is preserved |
+| Tokens mixing Hebrew with numbers, Latin text or hyphens lost everything after the first Hebrew word | `אלף-7` became `אלף`, so `אלף-7` and `אלף-9` were the same term | `אלף-7` stays `אלף-7` |
 
-### Keeping numbers, codes and Latin text: `preserve_mixed_tokens`
+### Tokens that mix Hebrew with numbers, Latin text or hyphens
 
-By default a token is lemmatized as a whole and only the first Hebrew word survives, so values
-such as `אלף-7` or `יחידה-8200` lose their number and `אלף-7` and `אלף-9` become the same term.
-Enable the setting on the filter to lemmatize only the Hebrew words and keep the rest:
+Only the Hebrew words inside a token are lemmatized. Digits, Latin text and the separators
+between words are kept, and a token without any Hebrew letter is not sent to the model at all.
+Punctuation at the edges of a token is still dropped.
 
-```json
-"filter": {
-  "heb_lemmas_keep": { "type": "heb_lemmas", "preserve_mixed_tokens": true }
-},
-"analyzer": {
-  "hebrew_analyzer": {
-    "tokenizer": "whitespace",
-    "filter": ["heb_lemmas_keep", "heb_stopwords"]
-  }
-}
-```
-
-| Token | Default | `preserve_mixed_tokens: true` |
+| Token | Before | After |
 | --- | --- | --- |
 | `אלף-7` | `אלף` | `אלף-7` |
 | `יחידה-8200` | `יחידה` | `יחידה-8200` |
@@ -230,13 +219,13 @@ Enable the setting on the filter to lemmatize only the Hebrew words and keep the
 | `קריית-שמונה` | `קריה` | `קריה-שמונה` |
 | `12/05/2024` | `12` | `12/05/2024` |
 | `iPhone` | `i` | `iPhone` |
-| `הילדים.` | `ילד` | `ילד` (edge punctuation is still dropped) |
+| `(אלף-7)` | `(` | `אלף-7` |
+| `הילדים.` | `ילד` | `ילד` |
 
-Tokens without any Hebrew letter are not sent to the model at all. The setting is off by default
-because it changes the terms of existing values; set it when you create a new index.
+### Keeping specific tokens as they are
 
-To keep specific tokens untouched, put a `keyword_marker` before `heb_lemmas`, for example to keep
-every token that contains a digit, a Latin letter, a slash or a hyphen:
+Put a `keyword_marker` before `heb_lemmas` to leave chosen tokens untouched, for example every
+token that contains a digit, a Latin letter, a slash or a hyphen:
 
 ```json
 "filter": {

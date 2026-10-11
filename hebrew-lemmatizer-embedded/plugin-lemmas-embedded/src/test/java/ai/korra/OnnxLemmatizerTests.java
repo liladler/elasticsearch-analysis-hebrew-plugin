@@ -165,13 +165,13 @@ public class OnnxLemmatizerTests {
     }
 
     @Test
-    public void mixedTokensKeepTheirNumbersWhenPreservationIsEnabled() throws Exception {
+    public void mixedTokensKeepTheirNumbers() throws Exception {
         OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data5").toPath());
 
-        assertEquals(List.of("אלף-7"), lemmatizer.lemmatize(List.of("אלף-7"), true));
-        assertEquals(List.of("יחידה-8200"), lemmatizer.lemmatize(List.of("יחידה-8200"), true));
-        assertEquals(List.of("בן-גוריון"), lemmatizer.lemmatize(List.of("בן-גוריון"), true));
-        assertEquals(List.of("אלף-7"), lemmatizer.lemmatize(List.of("(אלף-7)"), true));
+        assertEquals(List.of("אלף-7"), lemmatizer.lemmatize(List.of("אלף-7")));
+        assertEquals(List.of("יחידה-8200"), lemmatizer.lemmatize(List.of("יחידה-8200")));
+        assertEquals(List.of("בן-גוריון"), lemmatizer.lemmatize(List.of("בן-גוריון")));
+        assertEquals(List.of("אלף-7"), lemmatizer.lemmatize(List.of("(אלף-7)")));
     }
 
     @Test
@@ -179,40 +179,32 @@ public class OnnxLemmatizerTests {
         OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data6").toPath());
 
         // "הילדים" -> "ילד" even when glued to a number.
-        assertEquals(List.of("ילד-7"), lemmatizer.lemmatize(List.of("הילדים-7"), true));
+        assertEquals(List.of("ילד-7"), lemmatizer.lemmatize(List.of("הילדים-7")));
     }
 
     @Test
-    public void tokensWithoutHebrewAreReturnedUntouchedWhenPreservationIsEnabled() throws Exception {
+    public void tokensWithoutHebrewAreReturnedUntouched() throws Exception {
         OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data7").toPath());
 
         List<String> tokens = List.of("iPhone", "T-204", "12/05/2024", "03-5551234");
 
-        assertEquals(tokens, lemmatizer.lemmatize(tokens, true));
+        assertEquals(tokens, lemmatizer.lemmatize(tokens));
     }
 
     @Test
-    public void plainHebrewIsLemmatizedTheSameWithOrWithoutPreservation() throws Exception {
+    public void plainHebrewWithEdgePunctuationIsLemmatized() throws Exception {
         OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data8").toPath());
-        List<String> tokens = List.of("הילדים,", "אוכלים", "את", "הבננות.");
 
-        assertEquals(lemmatizer.lemmatize(tokens), lemmatizer.lemmatize(tokens, true));
+        // Punctuation at the edges of a token is dropped, as it always was.
+        assertEquals(List.of("ילד", "אוכל", "בננה"),
+                lemmatizer.lemmatize(List.of("הילדים,", "אוכלים", "הבננות.")));
     }
 
     @Test
     public void neighboursOfAMixedTokenAreLemmatizedAsUsual() throws Exception {
         OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data9").toPath());
 
-        assertEquals(List.of("ילד", "אלף-7", "אוכל"), lemmatizer.lemmatize(List.of("הילדים", "אלף-7", "אוכלים"), true));
-    }
-
-    @Test
-    public void defaultBehaviourIsUnchangedWhenPreservationIsOff() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data10").toPath());
-
-        // Existing indices must keep producing the same terms after a plugin upgrade.
-        assertEquals(List.of("אלף"), lemmatizer.lemmatize(List.of("אלף-7")));
-        assertEquals(List.of("אלף"), lemmatizer.lemmatize(List.of("אלף-7"), false));
+        assertEquals(List.of("ילד", "אלף-7", "אוכל"), lemmatizer.lemmatize(List.of("הילדים", "אלף-7", "אוכלים")));
     }
 
     private static void assertWindows(List<int[]> expected, List<int[]> actual) {
