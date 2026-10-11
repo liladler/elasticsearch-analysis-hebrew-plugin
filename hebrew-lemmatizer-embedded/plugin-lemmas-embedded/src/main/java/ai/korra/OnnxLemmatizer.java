@@ -165,6 +165,12 @@ public class OnnxLemmatizer implements AutoCloseable {
         for (int i = 0; i < tokens.size(); i++) {
             int[] wpIds = wordPieceIds.get(i);
             String originalToken = tokens.get(i);
+            if (wpIds.length == 0) {
+                // Nothing to look up (e.g. a token made only of niqqud marks). It owns no model
+                // position, so it must not read, or advance past, the next token's prediction.
+                lemmas.add(originalToken);
+                continue;
+            }
             if (logitIdx < topPredictions.length) {
                 lemmas.add(selectBestLemma(originalToken, topPredictions[logitIdx]));
             } else {
@@ -206,7 +212,9 @@ public class OnnxLemmatizer implements AutoCloseable {
         int significantCount = 0;
         Set<Character> extraSignificant = null;
 
-        for (char c : originalToken.toCharArray()) {
+        // Compare letters in the form the model saw them (no niqqud, lowercase); the original
+        // token is still what we return when no candidate matches.
+        for (char c : WordPieceTokenizer.normalize(originalToken).toCharArray()) {
             if (WEAK_LETTERS.contains(c)) {
                 continue;
             }
