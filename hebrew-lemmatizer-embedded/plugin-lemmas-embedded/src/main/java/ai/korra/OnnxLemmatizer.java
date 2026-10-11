@@ -42,6 +42,8 @@ public class OnnxLemmatizer implements AutoCloseable {
     private final WordPieceTokenizer tokenizer;
     private final String[] vocab;
 
+    private final java.util.concurrent.atomic.AtomicLong windowFailures = new java.util.concurrent.atomic.AtomicLong();
+
     private final int clsTokenId;
     private final int sepTokenId;
 
@@ -50,6 +52,9 @@ public class OnnxLemmatizer implements AutoCloseable {
     private static final int HEBREW_END = 0x05FF;
     private static final int HEBREW_RANGE = HEBREW_END - HEBREW_START + 1;
     private static final int PREDICTIONS_PER_TOKEN = 3;
+    // BERT position embeddings stop at 512; two positions go to [CLS] and [SEP].
+    static final int MAX_SEQUENCE_LENGTH = 512;
+    static final int MAX_PIECES_PER_WINDOW = MAX_SEQUENCE_LENGTH - 2;
 
     private OnnxLemmatizer(Path modelDir) throws OrtException, IOException {
         HebDebugger.log("Initializing OnnxLemmatizer from: " + modelDir);
@@ -128,19 +133,83 @@ public class OnnxLemmatizer implements AutoCloseable {
         }
     }
 
+    /**
+     * Lemmatizes the tokens of one field value.
+     *
+     * <p>The model accepts at most {@value #MAX_SEQUENCE_LENGTH} positions, two of which are the
+     * [CLS] and [SEP] markers. Values that fit are lemmatized in a single call, exactly as before.
+     * Longer values are split into windows of at most {@value #MAX_PIECES_PER_WINDOW} word pieces,
+     * preferring to end a window after a sentence-ending token, so every token still gets a lemma
+     * instead of the whole value silently being left as is.
+     */
     public List<String> lemmatize(List<String> tokens) throws OrtException {
         if (tokens == null || tokens.isEmpty()) {
             return Collections.emptyList();
         }
 
-        List<int[]> wordPieceIds = new ArrayList<>();
+        List<int[]> wordPieceIds = new ArrayList<>(tokens.size());
+        for (String token : tokens) {
+            wordPieceIds.add(tokenizer.encode(token));
+        }
+
+        List<String> lemmas = new ArrayList<>(tokens.size());
+        for (int[] window : planWindows(wordPieceIds, tokens, MAX_PIECES_PER_WINDOW)) {
+            lemmas.addAll(lemmatizeWindow(tokens, wordPieceIds, window[0], window[1]));
+        }
+        return lemmas;
+    }
+
+    /**
+     * Splits tokens into consecutive windows of at most {@code maxPieces} word pieces. Returns
+     * {@code [startInclusive, endExclusive)} token index pairs covering every token.
+     *
+     * <p>When a window would overflow it ends after the last sentence-ending token it contains,
+     * if there is one, otherwise at the last token that still fits.
+     */
+    static List<int[]> planWindows(List<int[]> pieces, List<String> tokens, int maxPieces) {
+        List<int[]> windows = new ArrayList<>();
+        int start = 0;
+        int count = 0;
+        int lastSentenceEnd = -1;
+
+        for (int i = 0; i < tokens.size(); i++) {
+            int size = pieces.get(i).length;
+            while (count + size > maxPieces && count > 0) {
+                int cut = lastSentenceEnd >= start ? lastSentenceEnd + 1 : i;
+                windows.add(new int[]{start, cut});
+                start = cut;
+                count = 0;
+                lastSentenceEnd = -1;
+                for (int j = start; j < i; j++) {
+                    count += pieces.get(j).length;
+                    if (endsSentence(tokens.get(j))) {
+                        lastSentenceEnd = j;
+                    }
+                }
+            }
+            count += size;
+            if (endsSentence(tokens.get(i))) {
+                lastSentenceEnd = i;
+            }
+        }
+        windows.add(new int[]{start, tokens.size()});
+        return windows;
+    }
+
+    private static boolean endsSentence(String token) {
+        if (token.isEmpty()) {
+            return false;
+        }
+        char last = token.charAt(token.length() - 1);
+        return last == '.' || last == '!' || last == '?' || last == '\u05C3';
+    }
+
+    private List<String> lemmatizeWindow(List<String> tokens, List<int[]> wordPieceIds, int from, int to)
+            throws OrtException {
         List<Integer> allIds = new ArrayList<>();
         allIds.add(clsTokenId);
-
-        for (String token : tokens) {
-            int[] ids = tokenizer.encode(token);
-            wordPieceIds.add(ids);
-            for (int id : ids) {
+        for (int i = from; i < to; i++) {
+            for (int id : wordPieceIds.get(i)) {
                 allIds.add(id);
             }
         }
@@ -157,12 +226,20 @@ public class OnnxLemmatizer implements AutoCloseable {
             tokenTypeIds[0][i] = 0;
         }
 
-        long[][] topPredictions = runInference(inputIds, attentionMask, tokenTypeIds);
+        long[][] topPredictions;
+        try {
+            topPredictions = runInference(inputIds, attentionMask, tokenTypeIds);
+        } catch (OrtException | RuntimeException e) {
+            // Keep the rest of the value lemmatized, and make the failure visible: before this
+            // the caller swallowed it silently and indexed the whole value unlemmatized.
+            warnWindowFailed(seqLen, from, to, e);
+            return new ArrayList<>(tokens.subList(from, to));
+        }
 
-        List<String> lemmas = new ArrayList<>();
+        List<String> lemmas = new ArrayList<>(to - from);
         int logitIdx = 1;
 
-        for (int i = 0; i < tokens.size(); i++) {
+        for (int i = from; i < to; i++) {
             int[] wpIds = wordPieceIds.get(i);
             String originalToken = tokens.get(i);
             if (wpIds.length == 0) {
@@ -180,6 +257,19 @@ public class OnnxLemmatizer implements AutoCloseable {
         }
 
         return lemmas;
+    }
+
+    private void warnWindowFailed(int sequenceLength, int from, int to, Exception cause) {
+        long failures = windowFailures.incrementAndGet();
+        // Failures should be rare (the model contract is validated at startup); cap the noise so a
+        // systematic problem cannot flood the log, but still keep reporting periodically.
+        if (failures <= 5 || failures % 1000 == 0) {
+            LOGGER.log(System.Logger.Level.WARNING,
+                    "Hebrew lemmatizer could not process a window of " + sequenceLength + " positions"
+                            + " (tokens " + from + "-" + (to - 1) + "); leaving them unlemmatized"
+                            + " (failure #" + failures + ")",
+                    cause);
+        }
     }
 
     private long[][] runInference(long[][] inputIds, long[][] attentionMask, long[][] tokenTypeIds)
