@@ -10,6 +10,7 @@ import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -52,8 +53,61 @@ public class WordPieceTokenizer {
         this.unkTokenId = vocab.getOrDefault("[UNK]", 100);
     }
 
+    /**
+     * Removes Hebrew niqqud and cantillation marks, and decomposes Hebrew presentation forms, so
+     * vowelized text reaches the vocabulary lookup the way the model's own tokenizer.json
+     * (NFD, StripAccents) presents it. Without this a word such as "שְׁלוֹם" fails to match and
+     * collapses to a single letter.
+     *
+     * <p>Deliberately limited to Hebrew: Latin letters are left exactly as they are. The model's
+     * tokenizer also lowercases and strips Latin accents, but doing that here changes how tokens
+     * such as "T-204" are handled (the lowercased form matches the vocabulary, and the plugin then
+     * keeps only its first piece), which would alter the terms of existing indices.
+     *
+     * <p>Text without any such mark is returned as is, without allocating.
+     */
+    static String normalize(String word) {
+        boolean needed = false;
+        for (int i = 0; i < word.length(); i++) {
+            char c = word.charAt(i);
+            if ((c >= 0x0591 && c <= 0x05C7) || (c >= 0xFB1D && c <= 0xFB4F)) {
+                needed = true;
+                break;
+            }
+        }
+        if (needed == false) {
+            return word;
+        }
+
+        StringBuilder builder = new StringBuilder(word.length());
+        for (int i = 0; i < word.length(); i++) {
+            char c = word.charAt(i);
+            if (c >= 0xFB1D && c <= 0xFB4F) {
+                // Precomposed letter with a point, e.g. U+FB2A: split into letter + mark first.
+                for (char part : Normalizer.normalize(String.valueOf(c), Normalizer.Form.NFD).toCharArray()) {
+                    appendUnlessHebrewMark(builder, part);
+                }
+            } else {
+                appendUnlessHebrewMark(builder, c);
+            }
+        }
+        return builder.toString();
+    }
+
+    private static void appendUnlessHebrewMark(StringBuilder builder, char c) {
+        boolean hebrewMark = c >= 0x0591 && c <= 0x05C7
+                && Character.getType(c) == Character.NON_SPACING_MARK;
+        if (hebrewMark == false) {
+            builder.append(c);
+        }
+    }
+
     public int[] encode(String word) {
         if (word == null || word.isEmpty()) {
+            return new int[0];
+        }
+        word = normalize(word);
+        if (word.isEmpty()) {
             return new int[0];
         }
 
