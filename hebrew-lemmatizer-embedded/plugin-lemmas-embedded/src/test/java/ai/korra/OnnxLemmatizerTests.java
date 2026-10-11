@@ -10,6 +10,8 @@ import ai.onnxruntime.OrtException;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import org.junit.Rule;
@@ -59,6 +61,7 @@ public class OnnxLemmatizerTests {
         assertFalse(Files.exists(cacheDir.resolve("stale-key")));
         assertFalse(Files.exists(legacyModel));
     }
+
     @Test
     public void lemmatizesVowelizedWordsLikePlainWords() throws Exception {
         OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data").toPath());
@@ -87,5 +90,85 @@ public class OnnxLemmatizerTests {
         List<String> lemmas = lemmatizer.lemmatize(List.of("\u05B0\u05B1", "הילדים"));
 
         assertEquals(List.of("\u05B0\u05B1", "ילד"), lemmas);
+    }
+
+    @Test
+    public void lemmatizesValuesLongerThanTheModelWindow() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data3").toPath());
+        // 700 words is well past the 512-position limit of the model.
+        List<String> tokens = Collections.nCopies(700, "הילדים");
+
+        List<String> lemmas = lemmatizer.lemmatize(tokens);
+
+        assertEquals(700, lemmas.size());
+        assertEquals("every token must be lemmatized, not left as is", Collections.nCopies(700, "ילד"), lemmas);
+    }
+
+    @Test
+    public void valuesThatFitInOneWindowAreStillLemmatizedTogether() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data4").toPath());
+        List<String> tokens = new ArrayList<>(Collections.nCopies(510, "הילדים"));
+
+        assertEquals(Collections.nCopies(510, "ילד"), lemmatizer.lemmatize(tokens));
+    }
+
+    @Test
+    public void shortInputsAreNotSplitAtSentenceEnds() {
+        // Three sentences that all fit: one window, exactly like before this change.
+        List<String> tokens = List.of("אחד.", "שניים!", "שלושה?");
+        List<int[]> pieces = List.of(new int[1], new int[1], new int[1]);
+
+        assertWindows(List.of(new int[]{0, 3}), OnnxLemmatizer.planWindows(pieces, tokens, 510));
+    }
+
+    @Test
+    public void overflowSplitsAtTheLastSentenceEnd() {
+        // 4 tokens of 3 pieces each, limit 10: the 4th does not fit, so the window ends after the
+        // sentence-ending token (index 1) instead of mid-sentence.
+        List<String> tokens = List.of("a", "b.", "c", "d");
+        List<int[]> pieces = List.of(new int[3], new int[3], new int[3], new int[3]);
+
+        assertWindows(List.of(new int[]{0, 2}, new int[]{2, 4}), OnnxLemmatizer.planWindows(pieces, tokens, 10));
+    }
+
+    @Test
+    public void overflowWithoutAnySentenceEndSplitsAtATokenBoundary() {
+        List<String> tokens = List.of("a", "b", "c", "d", "e");
+        List<int[]> pieces = List.of(new int[4], new int[4], new int[4], new int[4], new int[4]);
+
+        assertWindows(List.of(new int[]{0, 2}, new int[]{2, 4}, new int[]{4, 5}),
+                OnnxLemmatizer.planWindows(pieces, tokens, 10));
+    }
+
+    @Test
+    public void everyPlannedWindowRespectsTheLimitAndCoversAllTokens() {
+        List<String> tokens = new ArrayList<>();
+        List<int[]> pieces = new ArrayList<>();
+        for (int i = 0; i < 2000; i++) {
+            tokens.add(i % 17 == 0 ? "word." : "word");
+            pieces.add(new int[1 + (i % 5)]);
+        }
+
+        List<int[]> windows = OnnxLemmatizer.planWindows(pieces, tokens, 510);
+
+        int expectedStart = 0;
+        for (int[] window : windows) {
+            assertEquals("windows must be contiguous", expectedStart, window[0]);
+            int total = 0;
+            for (int i = window[0]; i < window[1]; i++) {
+                total += pieces.get(i).length;
+            }
+            assertTrue("window of " + total + " pieces exceeds the limit", total <= 510);
+            expectedStart = window[1];
+        }
+        assertEquals("every token must be in a window", tokens.size(), expectedStart);
+    }
+
+    private static void assertWindows(List<int[]> expected, List<int[]> actual) {
+        assertEquals("window count", expected.size(), actual.size());
+        for (int i = 0; i < expected.size(); i++) {
+            assertEquals("window " + i + " start", expected.get(i)[0], actual.get(i)[0]);
+            assertEquals("window " + i + " end", expected.get(i)[1], actual.get(i)[1]);
+        }
     }
 }
