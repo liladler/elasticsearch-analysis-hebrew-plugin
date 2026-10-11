@@ -18,6 +18,13 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 import org.apache.lucene.analysis.TokenFilter;
+import org.apache.lucene.analysis.CharArraySet;
+import org.apache.lucene.analysis.miscellaneous.SetKeywordMarkerFilter;
+import org.apache.lucene.analysis.synonym.SynonymGraphFilter;
+import org.apache.lucene.analysis.synonym.SynonymMap;
+import org.apache.lucene.analysis.tokenattributes.KeywordAttribute;
+import org.apache.lucene.analysis.tokenattributes.PositionLengthAttribute;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.junit.Test;
 
 public class HebTokenFilterTests {
@@ -113,6 +120,76 @@ public class HebTokenFilterTests {
         }
     }
 
+    @Test
+    public void keywordTokensKeepTheirTextAndTheirKeywordFlag() throws IOException {
+        List<List<String>> seenByLemmatizer = new ArrayList<>();
+        HebTokenFilter.LemmatizerProvider upper = input -> {
+            seenByLemmatizer.add(new ArrayList<>(input));
+            return upperCase(input);
+        };
+
+        Tokenizer tokenizer = new WhitespaceTokenizer();
+        tokenizer.setReader(new StringReader("aa bbbb cc"));
+        TokenStream marked = new SetKeywordMarkerFilter(tokenizer, new CharArraySet(List.of("bbbb"), false));
+
+        List<String> terms = new ArrayList<>();
+        List<Boolean> keywordFlags = new ArrayList<>();
+        try (TokenStream stream = new HebTokenFilter(marked, upper)) {
+            CharTermAttribute termAttr = stream.addAttribute(CharTermAttribute.class);
+            KeywordAttribute keywordAttr = stream.addAttribute(KeywordAttribute.class);
+            stream.reset();
+            while (stream.incrementToken()) {
+                terms.add(termAttr.toString());
+                keywordFlags.add(keywordAttr.isKeyword());
+            }
+            stream.end();
+        }
+
+        assertEquals("keyword token must not be replaced by its lemma", List.of("AA", "bbbb", "CC"), terms);
+        assertEquals("keyword flag must survive for downstream filters", List.of(false, true, false), keywordFlags);
+        assertEquals("keyword tokens still give the model its context",
+                List.of(List.of("aa", "bbbb", "cc")), seenByLemmatizer);
+    }
+
+    @Test
+    public void doesNotCallTheModelWhenEveryTokenIsAKeyword() throws IOException {
+        HebTokenFilter.LemmatizerProvider mustNotBeCalled = input -> {
+            throw new AssertionError("the model must not run when every token is a keyword");
+        };
+
+        Tokenizer tokenizer = new WhitespaceTokenizer();
+        tokenizer.setReader(new StringReader("aa bb"));
+        TokenStream marked = new SetKeywordMarkerFilter(tokenizer, new CharArraySet(List.of("aa", "bb"), false));
+
+        List<String> terms = new ArrayList<>();
+        try (TokenStream stream = new HebTokenFilter(marked, mustNotBeCalled)) {
+            CharTermAttribute termAttr = stream.addAttribute(CharTermAttribute.class);
+            stream.reset();
+            while (stream.incrementToken()) {
+                terms.add(termAttr.toString());
+            }
+            stream.end();
+        }
+
+        assertEquals(List.of("aa", "bb"), terms);
+    }
+
+    @Test
+    public void preservesPositionLengthFromAGraphFilter() throws IOException {
+        // synonym_graph turns "ny" into the two-token path "new york": the original token spans
+        // two positions. Flattening that to 1 breaks the graph.
+        SynonymMap.Builder builder = new SynonymMap.Builder(true);
+        builder.add(new org.apache.lucene.util.CharsRef("ny"),
+                SynonymMap.Builder.join(new String[]{"new", "york"}, new CharsRefBuilder()), true);
+        SynonymMap map = builder.build();
+
+        List<String> withHeb = describeGraph(map, true);
+        List<String> withoutHeb = describeGraph(map, false);
+
+        assertEquals(List.of("new:1:1", "ny:0:2", "york:1:1"), withoutHeb);
+        assertEquals("heb_lemmas must not change positions or position lengths", withoutHeb, withHeb);
+    }
+
     private static List<TokenData> analyze(String text, HebTokenFilter.LemmatizerProvider lemmatizer)
             throws IOException {
         Tokenizer tokenizer = new WhitespaceTokenizer();
@@ -155,6 +232,30 @@ public class HebTokenFilterTests {
             }
             stream.end();
             return tokens;
+        }
+    }
+
+    /** Returns "term:positionIncrement:positionLength" for each token of "ny" after synonym expansion. */
+    private static List<String> describeGraph(SynonymMap map, boolean withHebFilter) throws IOException {
+        Tokenizer tokenizer = new WhitespaceTokenizer();
+        tokenizer.setReader(new StringReader("ny"));
+        TokenStream stream = new SynonymGraphFilter(tokenizer, map, true);
+        if (withHebFilter) {
+            stream = new HebTokenFilter(stream, input -> input);
+        }
+
+        try (TokenStream closeMe = stream) {
+            CharTermAttribute termAttr = closeMe.addAttribute(CharTermAttribute.class);
+            PositionIncrementAttribute incAttr = closeMe.addAttribute(PositionIncrementAttribute.class);
+            PositionLengthAttribute lenAttr = closeMe.addAttribute(PositionLengthAttribute.class);
+
+            List<String> out = new ArrayList<>();
+            closeMe.reset();
+            while (closeMe.incrementToken()) {
+                out.add(termAttr + ":" + incAttr.getPositionIncrement() + ":" + lenAttr.getPositionLength());
+            }
+            closeMe.end();
+            return out;
         }
     }
 
