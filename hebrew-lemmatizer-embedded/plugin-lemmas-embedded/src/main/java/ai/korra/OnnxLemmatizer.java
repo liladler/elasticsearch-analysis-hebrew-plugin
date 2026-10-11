@@ -143,17 +143,69 @@ public class OnnxLemmatizer implements AutoCloseable {
      * instead of the whole value silently being left as is.
      */
     public List<String> lemmatize(List<String> tokens) throws OrtException {
+        return lemmatize(tokens, false);
+    }
+
+    /**
+     * @param preserveMixedTokens when true, only the Hebrew words inside a token are lemmatized and
+     *     numbers, Latin text and separators are kept ("אלף-7" stays "אלף-7"); tokens without any
+     *     Hebrew letter skip the model. When false the whole token is lemmatized as before.
+     */
+    public List<String> lemmatize(List<String> tokens, boolean preserveMixedTokens) throws OrtException {
         if (tokens == null || tokens.isEmpty()) {
             return Collections.emptyList();
         }
+        if (preserveMixedTokens == false) {
+            return lemmatizeWords(tokens, tokens);
+        }
 
+        // Each Hebrew word of each token becomes one model word; the rest of the token is kept.
+        List<List<MixedTokens.Part>> partsPerToken = new ArrayList<>(tokens.size());
+        List<String> words = new ArrayList<>();
+        List<String> sentenceView = new ArrayList<>();
+        for (String token : tokens) {
+            List<MixedTokens.Part> parts = MixedTokens.split(token);
+            partsPerToken.add(parts);
+            if (parts == null) {
+                continue;
+            }
+            for (MixedTokens.Part part : parts) {
+                if (part.hebrew) {
+                    words.add(part.text);
+                    sentenceView.add(part.text);
+                }
+            }
+            if (endsSentence(token) && MixedTokens.hebrewPartCount(parts) > 0) {
+                int last = sentenceView.size() - 1;
+                sentenceView.set(last, sentenceView.get(last) + ".");
+            }
+        }
+
+        List<String> wordLemmas = words.isEmpty() ? Collections.emptyList() : lemmatizeWords(words, sentenceView);
+
+        List<String> result = new ArrayList<>(tokens.size());
+        int next = 0;
+        for (int i = 0; i < tokens.size(); i++) {
+            List<MixedTokens.Part> parts = partsPerToken.get(i);
+            if (parts == null) {
+                result.add(tokens.get(i));
+                continue;
+            }
+            int count = MixedTokens.hebrewPartCount(parts);
+            result.add(MixedTokens.rebuild(parts, wordLemmas.subList(next, next + count)));
+            next += count;
+        }
+        return result;
+    }
+
+    private List<String> lemmatizeWords(List<String> tokens, List<String> sentenceView) throws OrtException {
         List<int[]> wordPieceIds = new ArrayList<>(tokens.size());
         for (String token : tokens) {
             wordPieceIds.add(tokenizer.encode(token));
         }
 
         List<String> lemmas = new ArrayList<>(tokens.size());
-        for (int[] window : planWindows(wordPieceIds, tokens, MAX_PIECES_PER_WINDOW)) {
+        for (int[] window : planWindows(wordPieceIds, sentenceView, MAX_PIECES_PER_WINDOW)) {
             lemmas.addAll(lemmatizeWindow(tokens, wordPieceIds, window[0], window[1]));
         }
         return lemmas;

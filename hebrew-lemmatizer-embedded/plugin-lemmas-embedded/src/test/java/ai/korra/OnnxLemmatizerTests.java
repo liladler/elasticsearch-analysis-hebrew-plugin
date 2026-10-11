@@ -164,6 +164,57 @@ public class OnnxLemmatizerTests {
         assertEquals("every token must be in a window", tokens.size(), expectedStart);
     }
 
+    @Test
+    public void mixedTokensKeepTheirNumbersWhenPreservationIsEnabled() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data5").toPath());
+
+        assertEquals(List.of("אלף-7"), lemmatizer.lemmatize(List.of("אלף-7"), true));
+        assertEquals(List.of("יחידה-8200"), lemmatizer.lemmatize(List.of("יחידה-8200"), true));
+        assertEquals(List.of("בן-גוריון"), lemmatizer.lemmatize(List.of("בן-גוריון"), true));
+        assertEquals(List.of("אלף-7"), lemmatizer.lemmatize(List.of("(אלף-7)"), true));
+    }
+
+    @Test
+    public void hebrewPartsOfAMixedTokenAreStillLemmatized() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data6").toPath());
+
+        // "הילדים" -> "ילד" even when glued to a number.
+        assertEquals(List.of("ילד-7"), lemmatizer.lemmatize(List.of("הילדים-7"), true));
+    }
+
+    @Test
+    public void tokensWithoutHebrewAreReturnedUntouchedWhenPreservationIsEnabled() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data7").toPath());
+
+        List<String> tokens = List.of("iPhone", "T-204", "12/05/2024", "03-5551234");
+
+        assertEquals(tokens, lemmatizer.lemmatize(tokens, true));
+    }
+
+    @Test
+    public void plainHebrewIsLemmatizedTheSameWithOrWithoutPreservation() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data8").toPath());
+        List<String> tokens = List.of("הילדים,", "אוכלים", "את", "הבננות.");
+
+        assertEquals(lemmatizer.lemmatize(tokens), lemmatizer.lemmatize(tokens, true));
+    }
+
+    @Test
+    public void neighboursOfAMixedTokenAreLemmatizedAsUsual() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data9").toPath());
+
+        assertEquals(List.of("ילד", "אלף-7", "אוכל"), lemmatizer.lemmatize(List.of("הילדים", "אלף-7", "אוכלים"), true));
+    }
+
+    @Test
+    public void defaultBehaviourIsUnchangedWhenPreservationIsOff() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data10").toPath());
+
+        // Existing indices must keep producing the same terms after a plugin upgrade.
+        assertEquals(List.of("אלף"), lemmatizer.lemmatize(List.of("אלף-7")));
+        assertEquals(List.of("אלף"), lemmatizer.lemmatize(List.of("אלף-7"), false));
+    }
+
     private static void assertWindows(List<int[]> expected, List<int[]> actual) {
         assertEquals("window count", expected.size(), actual.size());
         for (int i = 0; i < expected.size(); i++) {
