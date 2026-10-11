@@ -35,6 +35,10 @@ public class HebTokenFilter extends TokenFilter {
     private final LemmatizerProvider lemmatizerProvider;
     private final Path dataPath;
     private boolean initialized = false;
+    // Set once upstream has reported the end of the stream. TokenStream consumers must not be
+    // read again after that, and doing so loses tokens inside delegating filters such as ES's
+    // `condition` filter. Cleared by reset().
+    private boolean inputExhausted;
 
     HebTokenFilter(TokenStream input, Path dataPath) {
         super(input);
@@ -68,6 +72,7 @@ public class HebTokenFilter extends TokenFilter {
     @Override
     public void reset() throws IOException {
         emitExtraToken = false;
+        inputExhausted = false;
         lemmaList.clear();
         lemmaIndex = 0;
         tokenList.clear();
@@ -86,6 +91,10 @@ public class HebTokenFilter extends TokenFilter {
             return true;
         }
 
+        if (inputExhausted) {
+            return false;
+        }
+
         tokenList.clear();
         offsetList.clear();
         posIncrementList.clear();
@@ -93,12 +102,14 @@ public class HebTokenFilter extends TokenFilter {
         if (input.incrementToken()) {
             captureCurrentToken();
         } else {
+            inputExhausted = true;
             return false;
         }
 
         while (input.incrementToken()) {
             captureCurrentToken();
         }
+        inputExhausted = true;
 
         try {
             lemmaList = lemmatizerProvider != null
