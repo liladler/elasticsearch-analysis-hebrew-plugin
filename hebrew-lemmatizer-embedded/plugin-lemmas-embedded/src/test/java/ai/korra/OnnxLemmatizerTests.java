@@ -239,6 +239,28 @@ public class OnnxLemmatizerTests {
         assertEquals(List.of("ב-1985"), lemmatizer.lemmatize(List.of("ב-1985")));
     }
 
+    @Test
+    public void aVowelizedTokenTheModelCannotMatchIsReturnedWithoutItsMarks() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data15").toPath());
+
+        // When no candidate matches, the token itself is returned. It must not carry niqqud,
+        // otherwise a query written without vowels can never match it.
+        for (String token : List.of("וַיִּקְרָא", "וַיַּבְדֵּל", "מְרַחֶפֶת", "בְּרֵאשִׁית")) {
+            String term = lemmatizer.lemmatize(List.of(token)).get(0);
+            assertEquals(token + " -> " + term, -1, firstHebrewMark(term));
+        }
+    }
+
+    private static int firstHebrewMark(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c >= 0x0591 && c <= 0x05C7 && c != 0x05BE && c != 0x05C0 && c != 0x05C3 && c != 0x05C6) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private static void assertWindows(List<int[]> expected, List<int[]> actual) {
         assertEquals("window count", expected.size(), actual.size());
         for (int i = 0; i < expected.size(); i++) {
