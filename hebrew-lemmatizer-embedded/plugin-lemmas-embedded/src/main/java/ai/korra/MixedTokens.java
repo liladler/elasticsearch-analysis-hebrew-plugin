@@ -112,8 +112,47 @@ final class MixedTokens {
                 || codePoint == '׳' || codePoint == '״';
     }
 
-    private static boolean isEdgePunctuation(int codePoint) {
+    /** Sentence punctuation, quotes and brackets that may surround a token without being part of it. */
+    private static final String SAFE_EDGE_CHARS = ".,;:!?\"'()[]{}\u00AB\u00BB\u201C\u201D\u201E\u2018\u2019\u201A"
+            + "\u2026\u2013\u2014\u2015-\u05BE\u05C3\u05F3\u05F4";
+
+    /**
+     * Drops sentence punctuation, quotes, brackets and invisible characters from both ends of a
+     * token that contains no Hebrew letter, so "2020," is the same term as "2020". Symbols that can
+     * be part of a term ("C#", "50%", "@user", "AT&T") are left alone. If nothing would remain the
+     * token is returned unchanged.
+     */
+    static String trimEdges(String token) {
+        int start = 0;
+        int end = token.length();
+        while (start < end && isSafeEdge(token.codePointAt(start))) {
+            start += Character.charCount(token.codePointAt(start));
+        }
+        while (end > start && isSafeEdge(token.codePointBefore(end))) {
+            end -= Character.charCount(token.codePointBefore(end));
+        }
+        return start >= end ? token : token.substring(start, end);
+    }
+
+    private static boolean isSafeEdge(int codePoint) {
+        return isSpaceOrInvisible(codePoint) || SAFE_EDGE_CHARS.indexOf(codePoint) >= 0;
+    }
+
+    /**
+     * Whitespace (including the no-break space, which Java does not treat as whitespace) and
+     * invisible format characters such as the right-to-left mark and zero width joiner. They are
+     * not part of any term, but they would otherwise stay inside it and break exact matches.
+     */
+    private static boolean isSpaceOrInvisible(int codePoint) {
         if (Character.isWhitespace(codePoint)) {
+            return true;
+        }
+        int type = Character.getType(codePoint);
+        return type == Character.SPACE_SEPARATOR || type == Character.FORMAT;
+    }
+
+    private static boolean isEdgePunctuation(int codePoint) {
+        if (isSpaceOrInvisible(codePoint)) {
             return true;
         }
         switch (Character.getType(codePoint)) {

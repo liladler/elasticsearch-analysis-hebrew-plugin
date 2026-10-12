@@ -75,4 +75,40 @@ public class MixedTokensTests {
 
         assertEquals("קריה-שמונה", MixedTokens.rebuild(parts, List.of("קריה", "שמונה")));
     }
+
+    @Test
+    public void edgePunctuationIsTrimmedFromTokensWithoutHebrewToo() {
+        // "2020," used to come back as "2020"; keeping the comma made it a different term.
+        assertEquals("2020", MixedTokens.trimEdges("2020,"));
+        assertEquals("2020", MixedTokens.trimEdges("2020."));
+        assertEquals("2020", MixedTokens.trimEdges("(2020)"));
+        assertEquals("1985", MixedTokens.trimEdges("1985;"));
+        assertEquals("T-204", MixedTokens.trimEdges("T-204."));
+        assertEquals("iPhone", MixedTokens.trimEdges("\"iPhone\""));
+    }
+
+    @Test
+    public void trimEdgesKeepsSymbolsThatAreNotSentencePunctuation() {
+        // Stripping these would change terms such as C# or 50%.
+        assertEquals("C#", MixedTokens.trimEdges("C#"));
+        assertEquals("50%", MixedTokens.trimEdges("50%"));
+        assertEquals("@user", MixedTokens.trimEdges("@user"));
+        assertEquals("AT&T", MixedTokens.trimEdges("AT&T"));
+    }
+
+    @Test
+    public void aTokenOfOnlyPunctuationIsKeptRatherThanEmptied() {
+        assertEquals("...", MixedTokens.trimEdges("..."));
+        assertEquals("-", MixedTokens.trimEdges("-"));
+        assertEquals("\u200F", MixedTokens.trimEdges("\u200F"));
+    }
+
+    @Test
+    public void invisibleCharactersAtTheEdgesAreTrimmed() {
+        assertEquals("H:הילדים", describe("הילדים.\u200F"));   // right-to-left mark after the period
+        assertEquals("H:הילדים", describe("הילדים\u200E"));   // left-to-right mark
+        assertEquals("H:הילדים", describe("הילדים\u00A0"));   // no-break space
+        assertEquals("H:הילדים", describe("\u200Dהילדים\u200D")); // zero width joiner
+        assertEquals("2020", MixedTokens.trimEdges("2020,\u200F"));
+    }
 }
