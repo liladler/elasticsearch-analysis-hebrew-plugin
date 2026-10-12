@@ -261,6 +261,29 @@ public class OnnxLemmatizerTests {
         return -1;
     }
 
+    @Test
+    public void sentenceEndsFollowedByAClosingQuoteOrBracketStillEndTheSentence() {
+        // 4 tokens of 3 pieces, limit 10: the window must end after the sentence end at index 1,
+        // whatever closing character follows the punctuation.
+        for (String end : List.of(".", "!", "?", "\u2026", "\u05C3", ".\"", ".)", "?\"", "!)", ".\u201D", ".\u200F")) {
+            List<String> tokens = List.of("a", "b" + end, "c", "d");
+            List<int[]> pieces = List.of(new int[3], new int[3], new int[3], new int[3]);
+
+            assertWindows(List.of(new int[]{0, 2}, new int[]{2, 4}), OnnxLemmatizer.planWindows(pieces, tokens, 10));
+        }
+    }
+
+    @Test
+    public void aTokenThatMerelyContainsPunctuationIsNotASentenceEnd() {
+        for (String token : List.of("3.5", "e.g", "a,b", "\"", ")", "...x")) {
+            List<String> tokens = List.of("a", token, "c", "d");
+            List<int[]> pieces = List.of(new int[4], new int[4], new int[4], new int[4]);
+
+            // no sentence end anywhere: plain token-boundary split, 10 pieces per window
+            assertWindows(List.of(new int[]{0, 2}, new int[]{2, 4}), OnnxLemmatizer.planWindows(pieces, tokens, 10));
+        }
+    }
+
     private static void assertWindows(List<int[]> expected, List<int[]> actual) {
         assertEquals("window count", expected.size(), actual.size());
         for (int i = 0; i < expected.size(); i++) {
