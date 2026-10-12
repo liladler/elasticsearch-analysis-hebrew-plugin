@@ -296,7 +296,7 @@ public class OnnxLemmatizer implements AutoCloseable {
             if (logitIdx < topPredictions.length) {
                 lemmas.add(selectBestLemma(originalToken, topPredictions[logitIdx]));
             } else {
-                lemmas.add(originalToken);
+                lemmas.add(WordPieceTokenizer.normalize(originalToken));
             }
             logitIdx += wpIds.length;
         }
@@ -347,9 +347,11 @@ public class OnnxLemmatizer implements AutoCloseable {
         int significantCount = 0;
         Set<Character> extraSignificant = null;
 
-        // Compare letters in the form the model saw them (no niqqud, lowercase); the original
-        // token is still what we return when no candidate matches.
-        for (char c : WordPieceTokenizer.normalize(originalToken).toCharArray()) {
+        // Compare letters in the form the model saw them (no niqqud). That form is also what we
+        // return when no candidate matches: a token with niqqud left in would never match a
+        // query written without vowels.
+        String normalizedToken = WordPieceTokenizer.normalize(originalToken);
+        for (char c : normalizedToken.toCharArray()) {
             if (WEAK_LETTERS.contains(c)) {
                 continue;
             }
@@ -417,7 +419,7 @@ public class OnnxLemmatizer implements AutoCloseable {
             }
         }
 
-        return originalToken;
+        return normalizedToken;
     }
 
     private static Path extractModelResources(Path dataPath) throws IOException {
