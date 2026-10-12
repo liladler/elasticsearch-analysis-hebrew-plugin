@@ -125,8 +125,18 @@ no changes to the API, settings, mappings or filter names, so a new zip is a dro
 **We recommend reindexing your data after upgrading.** Because the fixes are backported, they
 change the terms produced for inputs that were previously handled wrongly. Documents that are
 already indexed keep their old terms, while queries are analyzed with the fixed filter, so the
-affected tokens can miss until the data is reindexed. Inputs that do not hit any of the cases
-below are not affected.
+affected tokens can miss until the data is reindexed.
+
+Plain Hebrew words are lemmatized exactly as before, but real text contains many tokens that are
+not plain Hebrew words: a few percent of the tokens in typical Hebrew text carry punctuation,
+digits, hyphens or Latin letters, and those can change. Reindex **all** Hebrew fields, not only
+the ones that obviously contain codes or vowelized text.
+
+Elasticsearch cannot tell the old and the new plugin apart, because the zip keeps the same file
+name and version. During a rolling upgrade the nodes of one cluster can therefore index the same
+document differently (a primary and its replica), and searches can return different results
+depending on which node answers. Upgrade all nodes, then reindex, and avoid mixing old and new
+nodes for longer than the upgrade itself.
 
 | Fixed | Before | After |
 | --- | --- | --- |
