@@ -241,12 +241,27 @@ public class OnnxLemmatizer implements AutoCloseable {
         return windows;
     }
 
+    /**
+     * True if the token ends a sentence: its last character is . ! ? the ellipsis or sof pasuq,
+     * ignoring any closing quote, bracket or invisible mark after it (a sentence end is often
+     * written as {@code ."} or {@code .)} or {@code ?"}).
+     */
     private static boolean endsSentence(String token) {
-        if (token.isEmpty()) {
+        int end = token.length();
+        while (end > 0 && isClosingCharacter(token.charAt(end - 1))) {
+            end--;
+        }
+        if (end == 0) {
             return false;
         }
-        char last = token.charAt(token.length() - 1);
-        return last == '.' || last == '!' || last == '?' || last == '\u05C3';
+        char last = token.charAt(end - 1);
+        return last == '.' || last == '!' || last == '?' || last == '\u2026' || last == '\u05C3';
+    }
+
+    private static boolean isClosingCharacter(char c) {
+        return "\"')]}\u00BB\u201D\u2019\u05F3\u05F4".indexOf(c) >= 0
+                || Character.getType(c) == Character.FORMAT
+                || Character.getType(c) == Character.SPACE_SEPARATOR;
     }
 
     private List<String> lemmatizeWindow(List<String> tokens, List<int[]> wordPieceIds, int from, int to)
