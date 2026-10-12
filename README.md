@@ -166,6 +166,47 @@ token that contains a digit, a Latin letter, a slash or a hyphen:
 }
 ```
 
+### Splitting hyphenated tokens into separate terms
+
+The `whitespace` tokenizer keeps a hyphenated token such as `אלף-7` in one piece, and the filter
+keeps it as one term. If you would rather index the parts as separate terms, split on the hyphen
+before `heb_lemmas` with a `pattern_replace` char filter:
+
+```json
+"analysis": {
+  "char_filter": {
+    "split_hyphens": {
+      "type": "pattern_replace",
+      "pattern": "(?<=[\\p{L}\\p{N}])[-־](?=[\\p{L}\\p{N}])",
+      "replacement": " "
+    }
+  },
+  "analyzer": {
+    "hebrew_analyzer": {
+      "char_filter": ["split_hyphens"],
+      "tokenizer": "whitespace",
+      "filter": ["heb_lemmas", "heb_stopwords"]
+    }
+  }
+}
+```
+
+| Text | Without the char filter | With the char filter |
+| --- | --- | --- |
+| `ה-26` | `ה-26` | `26` |
+| `ב-1985` | `ב-1985` | `1985` |
+| `אלף-7` | `אלף-7` | `אלף`, `7` |
+| `קריית-שמונה` | `קריה-שמונה` | `קריה`, `שמונה` |
+| `T-204` | `T-204` | `T`, `204` |
+
+- The parts get consecutive positions, so a `match_phrase` query keeps them side by side.
+- The query is analyzed the same way, so searching with a hyphen or with a space finds the same
+  documents.
+- A part that is a stopword is removed by `heb_stopwords`, which is why the one-letter prefix in
+  `ה-26` disappears.
+- For identifiers that must match exactly (call signs, unit ids), use a `keyword` field rather than
+  this analyzer: after splitting, a search for `204` also finds `F-204`.
+
 ## Upgrade to a newer ES version (e.g., 9.3)
 
 1. Run `./scripts/build_plugin_linux.sh --es-version <ES>`
