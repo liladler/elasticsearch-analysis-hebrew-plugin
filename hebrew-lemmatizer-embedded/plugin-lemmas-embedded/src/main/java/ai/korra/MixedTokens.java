@@ -74,7 +74,45 @@ final class MixedTokens {
         if (current.length() > 0) {
             parts.add(new Part(current.toString(), currentHebrew));
         }
-        return anyHebrewLetter ? parts : null;
+        return anyHebrewLetter ? treatLoneLettersNextToDigitsAsText(parts) : null;
+    }
+
+    /**
+     * A single Hebrew letter next to a number ("ה-26", "ב-1985") is a prefix, not a word. Sent to
+     * the model on its own, with nothing to go on, its lemma depended on the sentence around it
+     * ("את-26", "מה-26", "ה-26" for the same token), so the same value produced different terms.
+     * Such a letter is kept as written; if no real Hebrew word is left the token skips the model.
+     */
+    private static List<Part> treatLoneLettersNextToDigitsAsText(List<Part> parts) {
+        List<Part> result = new ArrayList<>(parts.size());
+        boolean anyHebrew = false;
+        for (int i = 0; i < parts.size(); i++) {
+            Part part = parts.get(i);
+            boolean lone = part.hebrew && letterCount(part.text) == 1
+                    && (hasDigit(parts, i - 1) || hasDigit(parts, i + 1));
+            if (lone) {
+                part = new Part(part.text, false);
+            }
+            anyHebrew |= part.hebrew;
+            Part previous = result.isEmpty() ? null : result.get(result.size() - 1);
+            if (previous != null && previous.hebrew == false && part.hebrew == false) {
+                result.set(result.size() - 1, new Part(previous.text + part.text, false));
+            } else {
+                result.add(part);
+            }
+        }
+        return anyHebrew ? result : null;
+    }
+
+    private static boolean hasDigit(List<Part> parts, int index) {
+        if (index < 0 || index >= parts.size() || parts.get(index).hebrew) {
+            return false;
+        }
+        return parts.get(index).text.codePoints().anyMatch(Character::isDigit);
+    }
+
+    private static int letterCount(String text) {
+        return (int) text.codePoints().filter(MixedTokens::isHebrewLetter).count();
     }
 
     /** Joins the parts back together, replacing each Hebrew part by the next lemma. */

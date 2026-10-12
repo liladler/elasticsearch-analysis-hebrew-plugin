@@ -111,4 +111,32 @@ public class MixedTokensTests {
         assertEquals("H:הילדים", describe("\u200Dהילדים\u200D")); // zero width joiner
         assertEquals("2020", MixedTokens.trimEdges("2020,\u200F"));
     }
+    @Test
+    public void aLoneLetterNextToDigitsIsAPrefixNotAWordForTheModel() {
+        // "ה-26" and "ב-1985": a single letter glued to a number. Sent to the model on its own the
+        // lemma depended on the surrounding sentence (את-26, מה-26, ...), so it is kept as written.
+        assertNull(describe("ה-26"));
+        assertNull(describe("ב-1985"));
+        assertNull(describe("ו7"));
+        assertNull(describe("ל-3/4"));
+    }
+
+    @Test
+    public void aLoneLetterThatIsNotNextToDigitsIsStillAWord() {
+        assertEquals("H:א|O:-|H:ב", describe("א-ב"));
+        assertEquals("H:בן|O:-|H:גוריון", describe("בן-גוריון"));
+    }
+
+    @Test
+    public void longerHebrewWordsNextToDigitsAreStillLemmatized() {
+        assertEquals("H:אלף|O:-7", describe("אלף-7"));
+        assertEquals("H:הילדים|O:-7", describe("הילדים-7"));
+        assertEquals("H:קו|O:-480", describe("קו-480"));
+    }
+
+    @Test
+    public void onlyTheLoneLetterIsTreatedAsAPrefix() {
+        // "במאי" is a real word and stays one; it is not mistaken for a prefix.
+        assertEquals("H:במאי|O:-26", describe("במאי-26"));
+    }
 }

@@ -223,6 +223,22 @@ public class OnnxLemmatizerTests {
                 lemmatizer.lemmatize(List.of("הילדים.\u200F", "הילדים\u00A0", "הילדים\u200E")));
     }
 
+    @Test
+    public void theSameLetterAndNumberGivesTheSameTermInAnyContext() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data14").toPath());
+
+        // "ה-26" used to come out as ה-26, את-26, מה-26 or וה-26 depending on its neighbours.
+        for (List<String> context : List.of(
+                List.of("ה-26", "במאי"),
+                List.of("בתאריך", "ה-26"),
+                List.of("הוא", "אמר", "ה-26", "היום"),
+                List.of("את", "ה-26"))) {
+            List<String> lemmas = lemmatizer.lemmatize(context);
+            assertEquals("ה-26 in " + context, "ה-26", lemmas.get(context.indexOf("ה-26")));
+        }
+        assertEquals(List.of("ב-1985"), lemmatizer.lemmatize(List.of("ב-1985")));
+    }
+
     private static void assertWindows(List<int[]> expected, List<int[]> actual) {
         assertEquals("window count", expected.size(), actual.size());
         for (int i = 0; i < expected.size(); i++) {
