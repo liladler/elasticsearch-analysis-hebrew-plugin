@@ -207,6 +207,22 @@ public class OnnxLemmatizerTests {
         assertEquals(List.of("ילד", "אלף-7", "אוכל"), lemmatizer.lemmatize(List.of("הילדים", "אלף-7", "אוכלים")));
     }
 
+    @Test
+    public void edgePunctuationIsDroppedFromNumbersAndLatinTokens() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data12").toPath());
+
+        assertEquals(List.of("2020", "2020", "2020", "T-204", "C#"),
+                lemmatizer.lemmatize(List.of("2020,", "2020.", "(2020)", "T-204.", "C#")));
+    }
+
+    @Test
+    public void invisibleMarksAroundAHebrewWordAreDropped() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data13").toPath());
+
+        assertEquals(List.of("ילד", "ילד", "ילד"),
+                lemmatizer.lemmatize(List.of("הילדים.\u200F", "הילדים\u00A0", "הילדים\u200E")));
+    }
+
     private static void assertWindows(List<int[]> expected, List<int[]> actual) {
         assertEquals("window count", expected.size(), actual.size());
         for (int i = 0; i < expected.size(); i++) {

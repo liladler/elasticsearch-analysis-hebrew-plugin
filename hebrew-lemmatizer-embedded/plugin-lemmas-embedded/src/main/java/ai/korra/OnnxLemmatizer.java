@@ -181,7 +181,7 @@ public class OnnxLemmatizer implements AutoCloseable {
         for (int i = 0; i < tokens.size(); i++) {
             List<MixedTokens.Part> parts = partsPerToken.get(i);
             if (parts == null) {
-                result.add(tokens.get(i));
+                result.add(MixedTokens.trimEdges(tokens.get(i)));
                 continue;
             }
             int count = MixedTokens.hebrewPartCount(parts);
