@@ -45,6 +45,12 @@ final class MixedTokens {
             return null;
         }
         String core = token.substring(start, end);
+        if (core.codePoints().anyMatch(MixedTokens::isHebrewLetter)) {
+            // Right-to-left and left-to-right marks, joiners and the like are invisible and mean
+            // nothing in a term, but inside a word they split it for the model and break exact
+            // matches, so a word with one stray mark never matched the same word without it.
+            core = removeInvisibleCharacters(core);
+        }
 
         List<Part> parts = new ArrayList<>();
         StringBuilder current = new StringBuilder();
@@ -74,7 +80,45 @@ final class MixedTokens {
         if (current.length() > 0) {
             parts.add(new Part(current.toString(), currentHebrew));
         }
-        return anyHebrewLetter ? parts : null;
+        return anyHebrewLetter ? treatLoneLettersNextToDigitsAsText(parts) : null;
+    }
+
+    /**
+     * A single Hebrew letter next to a number ("ה-26", "ב-1985") is a prefix, not a word. Sent to
+     * the model on its own, with nothing to go on, its lemma depended on the sentence around it
+     * ("את-26", "מה-26", "ה-26" for the same token), so the same value produced different terms.
+     * Such a letter is kept as written; if no real Hebrew word is left the token skips the model.
+     */
+    private static List<Part> treatLoneLettersNextToDigitsAsText(List<Part> parts) {
+        List<Part> result = new ArrayList<>(parts.size());
+        boolean anyHebrew = false;
+        for (int i = 0; i < parts.size(); i++) {
+            Part part = parts.get(i);
+            boolean lone = part.hebrew && letterCount(part.text) == 1
+                    && (hasDigit(parts, i - 1) || hasDigit(parts, i + 1));
+            if (lone) {
+                part = new Part(part.text, false);
+            }
+            anyHebrew |= part.hebrew;
+            Part previous = result.isEmpty() ? null : result.get(result.size() - 1);
+            if (previous != null && previous.hebrew == false && part.hebrew == false) {
+                result.set(result.size() - 1, new Part(previous.text + part.text, false));
+            } else {
+                result.add(part);
+            }
+        }
+        return anyHebrew ? result : null;
+    }
+
+    private static boolean hasDigit(List<Part> parts, int index) {
+        if (index < 0 || index >= parts.size() || parts.get(index).hebrew) {
+            return false;
+        }
+        return parts.get(index).text.codePoints().anyMatch(Character::isDigit);
+    }
+
+    private static int letterCount(String text) {
+        return (int) text.codePoints().filter(MixedTokens::isHebrewLetter).count();
     }
 
     /** Joins the parts back together, replacing each Hebrew part by the next lemma. */
@@ -97,6 +141,13 @@ final class MixedTokens {
         return count;
     }
 
+    private static String removeInvisibleCharacters(String text) {
+        StringBuilder builder = new StringBuilder(text.length());
+        text.codePoints().filter(codePoint -> Character.getType(codePoint) != Character.FORMAT)
+                .forEach(builder::appendCodePoint);
+        return builder.toString();
+    }
+
     private static boolean isHebrewLetter(int codePoint) {
         return (codePoint >= 0x05D0 && codePoint <= 0x05F2) // letters and Yiddish digraphs
                 || (codePoint >= 0xFB1D && codePoint <= 0xFB4F); // presentation forms
@@ -108,12 +159,68 @@ final class MixedTokens {
     }
 
     private static boolean isEmbeddedQuote(int codePoint) {
-        return codePoint == '\'' || codePoint == '"' || codePoint == '’'
-                || codePoint == '׳' || codePoint == '״';
+        return codePoint == '\'' || codePoint == '"' || codePoint == '\u2019' || codePoint == '\u2018'
+                || codePoint == '\u201C' || codePoint == '\u201D'
+                || codePoint == '\u05F3' || codePoint == '\u05F4';
+    }
+
+    /** Sentence punctuation, quotes and brackets that may surround a token without being part of it. */
+    private static final String SAFE_EDGE_CHARS = ".,;:!?\"'()[]{}\u00AB\u00BB\u201C\u201D\u201E\u2018\u2019\u201A"
+            + "\u2026\u2013\u2014\u2015-\u05BE\u05C3\u05F3\u05F4";
+
+    /**
+     * Drops sentence punctuation, quotes, brackets and invisible characters from both ends of a
+     * token that contains no Hebrew letter, so "2020," is the same term as "2020". Symbols that can
+     * be part of a term ("C#", "50%", "@user", "AT&T") are left alone. A token made only of
+     * punctuation keeps its punctuation (an invisible mark next to it is still dropped), and a
+     * token made only of invisible marks is returned unchanged rather than emptied.
+     */
+    static String trimEdges(String token) {
+        String trimmed = trimEnds(token, false);
+        if (trimmed.isEmpty() == false) {
+            return trimmed;
+        }
+        // Only punctuation and invisible marks were left. Keep the punctuation, but an invisible
+        // mark is never part of a term, so it is dropped here as well ("\u2026" + RLM -> "\u2026").
+        String withoutInvisibles = trimEnds(token, true);
+        return withoutInvisibles.isEmpty() ? token : withoutInvisibles;
+    }
+
+    private static String trimEnds(String token, boolean invisiblesOnly) {
+        int start = 0;
+        int end = token.length();
+        while (start < end && isTrimmable(token.codePointAt(start), invisiblesOnly)) {
+            start += Character.charCount(token.codePointAt(start));
+        }
+        while (end > start && isTrimmable(token.codePointBefore(end), invisiblesOnly)) {
+            end -= Character.charCount(token.codePointBefore(end));
+        }
+        return token.substring(start, end);
+    }
+
+    private static boolean isTrimmable(int codePoint, boolean invisiblesOnly) {
+        return invisiblesOnly ? isSpaceOrInvisible(codePoint) : isSafeEdge(codePoint);
+    }
+
+    private static boolean isSafeEdge(int codePoint) {
+        return isSpaceOrInvisible(codePoint) || SAFE_EDGE_CHARS.indexOf(codePoint) >= 0;
+    }
+
+    /**
+     * Whitespace (including the no-break space, which Java does not treat as whitespace) and
+     * invisible format characters such as the right-to-left mark and zero width joiner. They are
+     * not part of any term, but they would otherwise stay inside it and break exact matches.
+     */
+    private static boolean isSpaceOrInvisible(int codePoint) {
+        if (Character.isWhitespace(codePoint)) {
+            return true;
+        }
+        int type = Character.getType(codePoint);
+        return type == Character.SPACE_SEPARATOR || type == Character.FORMAT;
     }
 
     private static boolean isEdgePunctuation(int codePoint) {
-        if (Character.isWhitespace(codePoint)) {
+        if (isSpaceOrInvisible(codePoint)) {
             return true;
         }
         switch (Character.getType(codePoint)) {
