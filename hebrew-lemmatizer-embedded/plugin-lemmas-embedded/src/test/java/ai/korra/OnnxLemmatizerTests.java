@@ -325,6 +325,18 @@ public class OnnxLemmatizerTests {
         }
     }
 
+    @Test
+    public void anAcronymThatBecomesAnOrdinaryWordIsNotDeletedAsAStopword() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data20").toPath());
+        Stopwords stopwords = new Stopwords();
+
+        // עו"ד (lawyer) loses its quote mark and becomes עוד; heb_stopwords must not then remove it.
+        for (String spelling : new String[]{"עו\"ד", "עו\u05F4ד", "עו\u201Dד"}) {
+            String term = lemmatizer.lemmatize(List.of(spelling)).get(0);
+            assertTrue(spelling + " -> " + term + " must survive heb_stopwords", stopwords.isNotStopword(term));
+        }
+    }
+
     private static void assertWindows(List<int[]> expected, List<int[]> actual) {
         assertEquals("window count", expected.size(), actual.size());
         for (int i = 0; i < expected.size(); i++) {
