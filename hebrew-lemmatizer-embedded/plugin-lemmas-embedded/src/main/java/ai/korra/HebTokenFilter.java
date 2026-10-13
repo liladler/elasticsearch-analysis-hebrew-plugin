@@ -40,22 +40,25 @@ public class HebTokenFilter extends TokenFilter {
     private final List<Boolean> keywordList = new ArrayList<>();
     private final LemmatizerProvider lemmatizerProvider;
     private final Path dataPath;
+    private final int positionBudget;
     private boolean initialized = false;
     // Set once upstream has reported the end of the stream. TokenStream consumers must not be
     // read again after that, and doing so loses tokens inside delegating filters such as ES's
     // `condition` filter. Cleared by reset().
     private boolean inputExhausted;
 
-    HebTokenFilter(TokenStream input, Path dataPath) {
+    HebTokenFilter(TokenStream input, Path dataPath, int positionBudget) {
         super(input);
         this.lemmatizerProvider = null;
         this.dataPath = dataPath;
+        this.positionBudget = positionBudget;
     }
 
     HebTokenFilter(TokenStream input, LemmatizerProvider lemmatizerProvider) {
         super(input);
         this.lemmatizerProvider = lemmatizerProvider;
         this.dataPath = null;
+        this.positionBudget = 0;
     }
 
     private void initializeLemmatizer() throws IOException {
@@ -65,7 +68,7 @@ public class HebTokenFilter extends TokenFilter {
         if (!initialized) {
             try {
                 debugger.debugPrint("Initializing embedded ONNX lemmatizer");
-                lemmatizer = OnnxLemmatizer.getInstance(dataPath);
+                lemmatizer = OnnxLemmatizer.getInstance(dataPath, positionBudget);
                 initialized = true;
                 debugger.debugPrint("ONNX lemmatizer ready");
             } catch (Exception e) {

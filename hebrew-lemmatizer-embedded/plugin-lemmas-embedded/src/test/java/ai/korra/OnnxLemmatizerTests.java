@@ -13,12 +13,19 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 public class OnnxLemmatizerTests {
+
+    // The smallest budget a node can get, so these tests also run with windows waiting on each other.
+    private static final int ONE_WINDOW = OnnxLemmatizer.MAX_SEQUENCE_LENGTH;
 
     @Rule
     public TemporaryFolder temporaryFolder = new TemporaryFolder();
@@ -64,7 +71,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void lemmatizesVowelizedWordsLikePlainWords() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data").toPath(), ONE_WINDOW);
 
         List<String> plain = lemmatizer.lemmatize(List.of("הילדים", "אוכלים"));
         List<String> vowelized = lemmatizer.lemmatize(List.of("הַיְלָדִים", "אוֹכְלִים"));
@@ -75,7 +82,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void latinIdentifiersAreNotAlteredByNiqqudHandling() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data11").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data11").toPath(), ONE_WINDOW);
 
         // These came back as "t" and "f" when the normalization also lowercased Latin text.
         List<String> identifiers = List.of("T-204", "F-16", "F-16I");
@@ -85,7 +92,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void aTokenMadeOnlyOfMarksDoesNotShiftTheFollowingLemmas() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data2").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data2").toPath(), ONE_WINDOW);
 
         List<String> lemmas = lemmatizer.lemmatize(List.of("\u05B0\u05B1", "הילדים"));
 
@@ -94,7 +101,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void lemmatizesValuesLongerThanTheModelWindow() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data3").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data3").toPath(), ONE_WINDOW);
         // 700 words is well past the 512-position limit of the model.
         List<String> tokens = Collections.nCopies(700, "הילדים");
 
@@ -105,8 +112,28 @@ public class OnnxLemmatizerTests {
     }
 
     @Test
+    public void longValuesFromManyThreadsAreAllLemmatizedWithinTheBudget() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data12").toPath(), ONE_WINDOW);
+        List<String> tokens = Collections.nCopies(700, "הילדים");
+        List<String> expected = Collections.nCopies(700, "ילד");
+
+        ExecutorService threads = Executors.newFixedThreadPool(8);
+        try {
+            List<Future<List<String>>> results = new ArrayList<>();
+            for (int i = 0; i < 8; i++) {
+                results.add(threads.submit(() -> lemmatizer.lemmatize(tokens)));
+            }
+            for (Future<List<String>> result : results) {
+                assertEquals(expected, result.get(5, TimeUnit.MINUTES));
+            }
+        } finally {
+            threads.shutdownNow();
+        }
+    }
+
+    @Test
     public void valuesThatFitInOneWindowAreStillLemmatizedTogether() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data4").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data4").toPath(), ONE_WINDOW);
         List<String> tokens = new ArrayList<>(Collections.nCopies(510, "הילדים"));
 
         assertEquals(Collections.nCopies(510, "ילד"), lemmatizer.lemmatize(tokens));
@@ -166,7 +193,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void mixedTokensKeepTheirNumbers() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data5").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data5").toPath(), ONE_WINDOW);
 
         assertEquals(List.of("אלף-7"), lemmatizer.lemmatize(List.of("אלף-7")));
         assertEquals(List.of("יחידה-8200"), lemmatizer.lemmatize(List.of("יחידה-8200")));
@@ -176,7 +203,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void hebrewPartsOfAMixedTokenAreStillLemmatized() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data6").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data6").toPath(), ONE_WINDOW);
 
         // "הילדים" -> "ילד" even when glued to a number.
         assertEquals(List.of("ילד-7"), lemmatizer.lemmatize(List.of("הילדים-7")));
@@ -184,7 +211,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void tokensWithoutHebrewAreReturnedUntouched() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data7").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data7").toPath(), ONE_WINDOW);
 
         List<String> tokens = List.of("iPhone", "T-204", "12/05/2024", "03-5551234");
 
@@ -193,7 +220,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void plainHebrewWithEdgePunctuationIsLemmatized() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data8").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data8").toPath(), ONE_WINDOW);
 
         // Punctuation at the edges of a token is dropped, as it always was.
         assertEquals(List.of("ילד", "אוכל", "בננה"),
@@ -202,14 +229,14 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void neighboursOfAMixedTokenAreLemmatizedAsUsual() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data9").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data9").toPath(), ONE_WINDOW);
 
         assertEquals(List.of("ילד", "אלף-7", "אוכל"), lemmatizer.lemmatize(List.of("הילדים", "אלף-7", "אוכלים")));
     }
 
     @Test
     public void edgePunctuationIsDroppedFromNumbersAndLatinTokens() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data12").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data12").toPath(), ONE_WINDOW);
 
         assertEquals(List.of("2020", "2020", "2020", "T-204", "C#"),
                 lemmatizer.lemmatize(List.of("2020,", "2020.", "(2020)", "T-204.", "C#")));
@@ -217,7 +244,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void invisibleMarksAroundAHebrewWordAreDropped() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data13").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data13").toPath(), ONE_WINDOW);
 
         assertEquals(List.of("ילד", "ילד", "ילד"),
                 lemmatizer.lemmatize(List.of("הילדים.\u200F", "הילדים\u00A0", "הילדים\u200E")));
@@ -225,7 +252,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void theSameLetterAndNumberGivesTheSameTermInAnyContext() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data14").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data14").toPath(), ONE_WINDOW);
 
         // "ה-26" used to come out as ה-26, את-26, מה-26 or וה-26 depending on its neighbours.
         for (List<String> context : List.of(
@@ -241,7 +268,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void aVowelizedTokenTheModelCannotMatchIsReturnedWithoutItsMarks() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data15").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data15").toPath(), ONE_WINDOW);
 
         // When no candidate matches, the token itself is returned. It must not carry niqqud,
         // otherwise a query written without vowels can never match it.
@@ -286,7 +313,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void anEllipsisFollowedByAnInvisibleMarkLosesTheMark() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data16").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data16").toPath(), ONE_WINDOW);
 
         assertEquals(List.of("\u2026", "\u2026", "2020"),
                 lemmatizer.lemmatize(List.of("\u2026\u200F", "\u200F\u2026", "2020\u200F")));
@@ -294,7 +321,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void aWordWithAnInvisibleMarkInsideGivesTheSameTermAsWithout() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data19").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data19").toPath(), ONE_WINDOW);
 
         assertEquals(lemmatizer.lemmatize(List.of("שלום", "הילדים")),
                 lemmatizer.lemmatize(List.of("של\u200Fום", "הילד\u200Dים")));
@@ -302,14 +329,14 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void wordsWithGershayimOrGereshComeOutWithoutThem() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data17").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data17").toPath(), ONE_WINDOW);
 
         assertEquals(List.of("צהל", "גוב"), lemmatizer.lemmatize(List.of("צה\u05F4ל", "ג\u05F3וב")));
     }
 
     @Test
     public void everySpellingOfAnAcronymGivesTheSameTerm() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data18").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data18").toPath(), ONE_WINDOW);
 
         // Searching with or without the mark, and with whichever quote character, must find the same documents.
         for (String[] spellings : new String[][]{
@@ -327,7 +354,7 @@ public class OnnxLemmatizerTests {
 
     @Test
     public void anAcronymThatBecomesAnOrdinaryWordIsNotDeletedAsAStopword() throws Exception {
-        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data20").toPath());
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data20").toPath(), ONE_WINDOW);
         Stopwords stopwords = new Stopwords();
 
         // עו"ד (lawyer) loses its quote mark and becomes עוד; heb_stopwords must not then remove it.
