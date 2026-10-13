@@ -32,12 +32,7 @@ public class HebTokenFilter extends TokenFilter {
     private boolean emitExtraToken;
     private List<String> lemmaList = new ArrayList<>();
     private int lemmaIndex;
-    private final List<String> tokenList = new ArrayList<>();
-    private final List<int[]> offsetList = new ArrayList<>();
-    private final List<Integer> posIncrementList = new ArrayList<>();
-    private final List<String> typeList = new ArrayList<>();
-    private final List<Integer> posLengthList = new ArrayList<>();
-    private final List<Boolean> keywordList = new ArrayList<>();
+    private final List<CapturedToken> captured = new ArrayList<>();
     private final LemmatizerProvider lemmatizerProvider;
     private final Path dataPath;
     private final int positionBudget;
@@ -84,12 +79,7 @@ public class HebTokenFilter extends TokenFilter {
         inputExhausted = false;
         lemmaList.clear();
         lemmaIndex = 0;
-        tokenList.clear();
-        offsetList.clear();
-        posIncrementList.clear();
-        typeList.clear();
-        posLengthList.clear();
-        keywordList.clear();
+        captured.clear();
         super.reset();
     }
 
@@ -106,12 +96,7 @@ public class HebTokenFilter extends TokenFilter {
             return false;
         }
 
-        tokenList.clear();
-        offsetList.clear();
-        posIncrementList.clear();
-        typeList.clear();
-        posLengthList.clear();
-        keywordList.clear();
+        captured.clear();
         if (input.incrementToken()) {
             captureCurrentToken();
         } else {
@@ -124,19 +109,20 @@ public class HebTokenFilter extends TokenFilter {
         }
         inputExhausted = true;
 
+        List<String> terms = terms();
         try {
             // Keyword tokens stay in the model input so their neighbours are lemmatized with the
             // same context as before; only their own output is replaced below. Skip the model
             // entirely when there is nothing to lemmatize.
             lemmaList = allKeywords()
-                    ? new ArrayList<>(tokenList)
+                    ? new ArrayList<>(terms)
                     : lemmatizerProvider != null
-                            ? lemmatizerProvider.lemmatize(tokenList)
-                            : lemmatizer.lemmatize(tokenList);
+                            ? lemmatizerProvider.lemmatize(terms)
+                            : lemmatizer.lemmatize(terms);
             lemmaIndex = 0;
         } catch (Exception e) {
             debugger.debugPrint("Lemmatization error: " + e.getMessage());
-            lemmaList = new ArrayList<>(tokenList);
+            lemmaList = new ArrayList<>(terms);
             lemmaIndex = 0;
         }
         keepKeywordTokens();
@@ -150,17 +136,22 @@ public class HebTokenFilter extends TokenFilter {
     }
 
     private void captureCurrentToken() {
-        tokenList.add(termAttr.toString());
-        offsetList.add(new int[] { offsetAttr.startOffset(), offsetAttr.endOffset() });
-        posIncrementList.add(posAttr.getPositionIncrement());
-        typeList.add(typeAttr.type());
-        posLengthList.add(posLenAttr.getPositionLength());
-        keywordList.add(keywordAttr.isKeyword());
+        captured.add(new CapturedToken(termAttr.toString(), offsetAttr.startOffset(), offsetAttr.endOffset(),
+                posAttr.getPositionIncrement(), typeAttr.type(), posLenAttr.getPositionLength(),
+                keywordAttr.isKeyword()));
+    }
+
+    private List<String> terms() {
+        List<String> terms = new ArrayList<>(captured.size());
+        for (CapturedToken token : captured) {
+            terms.add(token.term());
+        }
+        return terms;
     }
 
     private boolean allKeywords() {
-        for (boolean keyword : keywordList) {
-            if (keyword == false) {
+        for (CapturedToken token : captured) {
+            if (token.keyword() == false) {
                 return false;
             }
         }
@@ -169,13 +160,13 @@ public class HebTokenFilter extends TokenFilter {
 
     /** Honors keyword_marker: a token flagged as keyword is emitted unchanged, not as its lemma. */
     private void keepKeywordTokens() {
-        if (lemmaList.size() != tokenList.size()) {
+        if (lemmaList.size() != captured.size()) {
             return;
         }
         List<String> result = new ArrayList<>(lemmaList);
         for (int i = 0; i < result.size(); i++) {
-            if (keywordList.get(i)) {
-                result.set(i, tokenList.get(i));
+            if (captured.get(i).keyword()) {
+                result.set(i, captured.get(i).term());
             }
         }
         lemmaList = result;
@@ -183,18 +174,23 @@ public class HebTokenFilter extends TokenFilter {
 
     private void produceTerm() {
         String lemma = lemmaList.get(lemmaIndex);
-        int[] offsets = offsetList.get(lemmaIndex);
+        CapturedToken token = captured.get(lemmaIndex);
 
         clearAttributes();
         termAttr.setEmpty().append(lemma);
-        offsetAttr.setOffset(offsets[0], offsets[1]);
-        posAttr.setPositionIncrement(posIncrementList.get(lemmaIndex));
-        typeAttr.setType(typeList.get(lemmaIndex));
-        posLenAttr.setPositionLength(posLengthList.get(lemmaIndex));
-        keywordAttr.setKeyword(keywordList.get(lemmaIndex));
+        offsetAttr.setOffset(token.startOffset(), token.endOffset());
+        posAttr.setPositionIncrement(token.positionIncrement());
+        typeAttr.setType(token.type());
+        posLenAttr.setPositionLength(token.positionLength());
+        keywordAttr.setKeyword(token.keyword());
 
         lemmaIndex++;
         emitExtraToken = lemmaIndex < lemmaList.size();
+    }
+
+    /** One token from upstream, with every attribute this filter emits again. */
+    private record CapturedToken(String term, int startOffset, int endOffset, int positionIncrement,
+                                 String type, int positionLength, boolean keyword) {
     }
 
     @FunctionalInterface
