@@ -70,6 +70,30 @@ public class WordPieceTokenizerTests {
     }
 
     @Test
+    public void quotesAndApostrophesInsideAWordAreDropped() {
+        // Gershayim, geresh, the ASCII quote and apostrophe, and the curly quotes Word substitutes
+        // for them are all the same thing in a Hebrew acronym or loanword. The model's vocabulary
+        // knows only the ASCII ones, so each spelling used to give a different term.
+        for (String quote : new String[]{"\u05F4", "\"", "\u201D", "\u201C"}) {
+            assertEquals("צהל", WordPieceTokenizer.normalize("צה" + quote + "ל"));
+            assertEquals("דר", WordPieceTokenizer.normalize("ד" + quote + "ר"));
+            assertEquals("ארהב", WordPieceTokenizer.normalize("ארה" + quote + "ב"));
+        }
+        for (String apostrophe : new String[]{"\u05F3", "'", "\u2019", "\u2018"}) {
+            assertEquals("גוב", WordPieceTokenizer.normalize("ג" + apostrophe + "וב"));
+        }
+    }
+
+    @Test
+    public void everySpellingOfAnAcronymEncodesTheSame() {
+        int[] plain = tokenizer.encode("ארהב");
+
+        assertArrayEquals(plain, tokenizer.encode("ארה\u05F4ב"));
+        assertArrayEquals(plain, tokenizer.encode("ארה\"ב"));
+        assertArrayEquals(plain, tokenizer.encode("ארה\u201Dב"));
+    }
+
+    @Test
     public void aTokenMadeOnlyOfMarksEncodesToNothing() {
         assertEquals(0, tokenizer.encode("ְֱ").length);
     }

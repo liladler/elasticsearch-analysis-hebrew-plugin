@@ -300,6 +300,31 @@ public class OnnxLemmatizerTests {
                 lemmatizer.lemmatize(List.of("של\u200Fום", "הילד\u200Dים")));
     }
 
+    @Test
+    public void wordsWithGershayimOrGereshComeOutWithoutThem() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data17").toPath());
+
+        assertEquals(List.of("צהל", "גוב"), lemmatizer.lemmatize(List.of("צה\u05F4ל", "ג\u05F3וב")));
+    }
+
+    @Test
+    public void everySpellingOfAnAcronymGivesTheSameTerm() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data18").toPath());
+
+        // Searching with or without the mark, and with whichever quote character, must find the same documents.
+        for (String[] spellings : new String[][]{
+                {"ארה\u05F4ב", "ארהב", "ארה\"ב", "ארה\u201Dב"},
+                {"צה\u05F4ל", "צהל", "צה\"ל", "צה\u201Dל"},
+                {"ד\u05F4ר", "דר", "ד\"ר", "ד\u201Dר"},
+                {"ג\u05F3וב", "גוב", "ג'וב", "ג\u2019וב"}}) {
+            List<String> expected = lemmatizer.lemmatize(List.of(spellings[1]));
+            for (String spelling : spellings) {
+                assertEquals(spelling + " must give the same term as " + spellings[1],
+                        expected, lemmatizer.lemmatize(List.of(spelling)));
+            }
+        }
+    }
+
     private static void assertWindows(List<int[]> expected, List<int[]> actual) {
         assertEquals("window count", expected.size(), actual.size());
         for (int i = 0; i < expected.size(); i++) {
