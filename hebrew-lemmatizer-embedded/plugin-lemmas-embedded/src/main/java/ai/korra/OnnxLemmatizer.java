@@ -180,9 +180,9 @@ public class OnnxLemmatizer implements AutoCloseable {
                 continue;
             }
             for (MixedTokens.Part part : parts) {
-                if (part.hebrew) {
-                    words.add(part.text);
-                    sentenceView.add(part.text);
+                if (part.hebrew()) {
+                    words.add(part.text());
+                    sentenceView.add(part.text());
                 }
             }
             if (endsSentence(token) && MixedTokens.hebrewPartCount(parts) > 0) {

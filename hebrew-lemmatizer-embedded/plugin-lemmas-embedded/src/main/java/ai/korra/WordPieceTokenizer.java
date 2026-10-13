@@ -70,7 +70,8 @@ public class WordPieceTokenizer {
         boolean needed = false;
         for (int i = 0; i < word.length(); i++) {
             char c = word.charAt(i);
-            if ((c >= 0x0591 && c <= 0x05C7) || (c >= 0xFB1D && c <= 0xFB4F) || isQuoteLike(c)) {
+            // The mark block is checked as a range here: a non-mark in it is just copied below.
+            if ((c >= 0x0591 && c <= 0x05C7) || HebrewChars.isPresentationForm(c) || HebrewChars.isQuoteLike(c)) {
                 needed = true;
                 break;
             }
@@ -82,7 +83,7 @@ public class WordPieceTokenizer {
         StringBuilder builder = new StringBuilder(word.length());
         for (int i = 0; i < word.length(); i++) {
             char c = word.charAt(i);
-            if (c >= 0xFB1D && c <= 0xFB4F) {
+            if (HebrewChars.isPresentationForm(c)) {
                 // Precomposed letter with a point, e.g. U+FB2A: split into letter + mark first.
                 for (char part : Normalizer.normalize(String.valueOf(c), Normalizer.Form.NFD).toCharArray()) {
                     appendUnlessHebrewMark(builder, part);
@@ -95,26 +96,19 @@ public class WordPieceTokenizer {
     }
 
     /**
-     * The characters Hebrew writes an acronym or loanword with: gershayim (U+05F4) and geresh
-     * (U+05F3), the ASCII quote and apostrophe, and the curly quotes word processors substitute for
-     * them. They are the same thing, but the model's vocabulary knows only the ASCII ones (and
-     * only for the acronyms it happened to see), so every spelling used to give a different term
-     * and a word written with the others was split into fragments, of which only the first
-     * survived. They are dropped, so a word is looked up as its letters, and searching with or
-     * without the mark, or with any of these characters, finds the same documents.
+     * Drops niqqud and cantillation marks, and the quote-like marks Hebrew writes an acronym or
+     * loanword with ({@link HebrewChars#isQuoteLike}). Those marks are the same thing, but the
+     * model's vocabulary knows only the ASCII ones (and only for the acronyms it happened to see),
+     * so every spelling used to give a different term and a word written with the others was split
+     * into fragments, of which only the first survived. They are dropped, so a word is looked up as
+     * its letters, and searching with or without the mark, or with any of these characters, finds
+     * the same documents.
      *
      * <p>Only words that contain a Hebrew letter reach this code, and a quote at the edge of a word
      * is trimmed before that, so this only ever removes marks inside a word.
      */
-    private static boolean isQuoteLike(char c) {
-        return c == '\u05F3' || c == '\u05F4' || c == '"' || c == '\''
-                || c == '\u2018' || c == '\u2019' || c == '\u201C' || c == '\u201D';
-    }
-
     private static void appendUnlessHebrewMark(StringBuilder builder, char c) {
-        boolean hebrewMark = c >= 0x0591 && c <= 0x05C7
-                && Character.getType(c) == Character.NON_SPACING_MARK;
-        if (hebrewMark == false && isQuoteLike(c) == false) {
+        if (HebrewChars.isMark(c) == false && HebrewChars.isQuoteLike(c) == false) {
             builder.append(c);
         }
     }

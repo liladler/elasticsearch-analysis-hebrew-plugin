@@ -18,7 +18,7 @@ public class MixedTokensTests {
         }
         List<String> rendered = new ArrayList<>();
         for (MixedTokens.Part part : parts) {
-            rendered.add((part.hebrew ? "H:" : "O:") + part.text);
+            rendered.add((part.hebrew() ? "H:" : "O:") + part.text());
         }
         return String.join("|", rendered);
     }

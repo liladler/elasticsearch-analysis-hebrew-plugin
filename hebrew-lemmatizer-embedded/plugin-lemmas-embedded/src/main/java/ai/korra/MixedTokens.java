@@ -2,6 +2,7 @@ package ai.korra;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.IntPredicate;
 
 /**
  * Splits a token into its Hebrew words and everything else, so that only the Hebrew words are
@@ -13,14 +14,7 @@ import java.util.List;
  */
 final class MixedTokens {
 
-    static final class Part {
-        final String text;
-        final boolean hebrew;
-
-        Part(String text, boolean hebrew) {
-            this.text = text;
-            this.hebrew = hebrew;
-        }
+    record Part(String text, boolean hebrew) {
     }
 
     private MixedTokens() {
@@ -33,19 +27,11 @@ final class MixedTokens {
      * to the model and is kept as is.
      */
     static List<Part> split(String token) {
-        int start = 0;
-        int end = token.length();
-        while (start < end && isEdgePunctuation(token.codePointAt(start))) {
-            start += Character.charCount(token.codePointAt(start));
-        }
-        while (end > start && isEdgePunctuation(token.codePointBefore(end))) {
-            end -= Character.charCount(token.codePointBefore(end));
-        }
-        if (start >= end) {
+        String core = trim(token, MixedTokens::isEdgePunctuation);
+        if (core.isEmpty()) {
             return null;
         }
-        String core = token.substring(start, end);
-        if (core.codePoints().anyMatch(MixedTokens::isHebrewLetter)) {
+        if (core.codePoints().anyMatch(HebrewChars::isLetter)) {
             // Right-to-left and left-to-right marks, joiners and the like are invisible and mean
             // nothing in a term, but inside a word they split it for the model and break exact
             // matches, so a word with one stray mark never matched the same word without it.
@@ -61,10 +47,10 @@ final class MixedTokens {
         for (int i = 0; i < core.length(); ) {
             int codePoint = core.codePointAt(i);
             int next = i + Character.charCount(codePoint);
-            boolean hebrew = isHebrewLetter(codePoint) || isHebrewMark(codePoint)
-                    || (isEmbeddedQuote(codePoint) && previousWasHebrew
-                            && next < core.length() && isHebrewLetter(core.codePointAt(next)));
-            if (isHebrewLetter(codePoint)) {
+            boolean hebrew = HebrewChars.isLetter(codePoint) || HebrewChars.isMark(codePoint)
+                    || (HebrewChars.isQuoteLike(codePoint) && previousWasHebrew
+                            && next < core.length() && HebrewChars.isLetter(core.codePointAt(next)));
+            if (HebrewChars.isLetter(codePoint)) {
                 anyHebrewLetter = true;
             }
 
@@ -94,15 +80,15 @@ final class MixedTokens {
         boolean anyHebrew = false;
         for (int i = 0; i < parts.size(); i++) {
             Part part = parts.get(i);
-            boolean lone = part.hebrew && letterCount(part.text) == 1
+            boolean lone = part.hebrew() && letterCount(part.text()) == 1
                     && (hasDigit(parts, i - 1) || hasDigit(parts, i + 1));
             if (lone) {
-                part = new Part(part.text, false);
+                part = new Part(part.text(), false);
             }
-            anyHebrew |= part.hebrew;
+            anyHebrew |= part.hebrew();
             Part previous = result.isEmpty() ? null : result.get(result.size() - 1);
-            if (previous != null && previous.hebrew == false && part.hebrew == false) {
-                result.set(result.size() - 1, new Part(previous.text + part.text, false));
+            if (previous != null && previous.hebrew() == false && part.hebrew() == false) {
+                result.set(result.size() - 1, new Part(previous.text() + part.text(), false));
             } else {
                 result.add(part);
             }
@@ -111,14 +97,14 @@ final class MixedTokens {
     }
 
     private static boolean hasDigit(List<Part> parts, int index) {
-        if (index < 0 || index >= parts.size() || parts.get(index).hebrew) {
+        if (index < 0 || index >= parts.size() || parts.get(index).hebrew()) {
             return false;
         }
-        return parts.get(index).text.codePoints().anyMatch(Character::isDigit);
+        return parts.get(index).text().codePoints().anyMatch(Character::isDigit);
     }
 
     private static int letterCount(String text) {
-        return (int) text.codePoints().filter(MixedTokens::isHebrewLetter).count();
+        return (int) text.codePoints().filter(HebrewChars::isLetter).count();
     }
 
     /** Joins the parts back together, replacing each Hebrew part by the next lemma. */
@@ -126,7 +112,7 @@ final class MixedTokens {
         StringBuilder result = new StringBuilder();
         int lemmaIndex = 0;
         for (Part part : parts) {
-            result.append(part.hebrew ? lemmas.get(lemmaIndex++) : part.text);
+            result.append(part.hebrew() ? lemmas.get(lemmaIndex++) : part.text());
         }
         return result.toString();
     }
@@ -134,7 +120,7 @@ final class MixedTokens {
     static int hebrewPartCount(List<Part> parts) {
         int count = 0;
         for (Part part : parts) {
-            if (part.hebrew) {
+            if (part.hebrew()) {
                 count++;
             }
         }
@@ -146,22 +132,6 @@ final class MixedTokens {
         text.codePoints().filter(codePoint -> Character.getType(codePoint) != Character.FORMAT)
                 .forEach(builder::appendCodePoint);
         return builder.toString();
-    }
-
-    private static boolean isHebrewLetter(int codePoint) {
-        return (codePoint >= 0x05D0 && codePoint <= 0x05F2) // letters and Yiddish digraphs
-                || (codePoint >= 0xFB1D && codePoint <= 0xFB4F); // presentation forms
-    }
-
-    private static boolean isHebrewMark(int codePoint) {
-        return codePoint >= 0x0591 && codePoint <= 0x05C7
-                && Character.getType(codePoint) == Character.NON_SPACING_MARK; // niqqud, cantillation
-    }
-
-    private static boolean isEmbeddedQuote(int codePoint) {
-        return codePoint == '\'' || codePoint == '"' || codePoint == '\u2019' || codePoint == '\u2018'
-                || codePoint == '\u201C' || codePoint == '\u201D'
-                || codePoint == '\u05F3' || codePoint == '\u05F4';
     }
 
     /** Sentence punctuation, quotes and brackets that may surround a token without being part of it. */
@@ -176,51 +146,35 @@ final class MixedTokens {
      * token made only of invisible marks is returned unchanged rather than emptied.
      */
     static String trimEdges(String token) {
-        String trimmed = trimEnds(token, false);
+        String trimmed = trim(token, MixedTokens::isSafeEdge);
         if (trimmed.isEmpty() == false) {
             return trimmed;
         }
         // Only punctuation and invisible marks were left. Keep the punctuation, but an invisible
         // mark is never part of a term, so it is dropped here as well ("\u2026" + RLM -> "\u2026").
-        String withoutInvisibles = trimEnds(token, true);
+        String withoutInvisibles = trim(token, HebrewChars::isSpaceOrInvisible);
         return withoutInvisibles.isEmpty() ? token : withoutInvisibles;
     }
 
-    private static String trimEnds(String token, boolean invisiblesOnly) {
+    /** Removes the characters matching {@code trimmable} from both ends of the token. */
+    private static String trim(String token, IntPredicate trimmable) {
         int start = 0;
         int end = token.length();
-        while (start < end && isTrimmable(token.codePointAt(start), invisiblesOnly)) {
+        while (start < end && trimmable.test(token.codePointAt(start))) {
             start += Character.charCount(token.codePointAt(start));
         }
-        while (end > start && isTrimmable(token.codePointBefore(end), invisiblesOnly)) {
+        while (end > start && trimmable.test(token.codePointBefore(end))) {
             end -= Character.charCount(token.codePointBefore(end));
         }
         return token.substring(start, end);
     }
 
-    private static boolean isTrimmable(int codePoint, boolean invisiblesOnly) {
-        return invisiblesOnly ? isSpaceOrInvisible(codePoint) : isSafeEdge(codePoint);
-    }
-
     private static boolean isSafeEdge(int codePoint) {
-        return isSpaceOrInvisible(codePoint) || SAFE_EDGE_CHARS.indexOf(codePoint) >= 0;
-    }
-
-    /**
-     * Whitespace (including the no-break space, which Java does not treat as whitespace) and
-     * invisible format characters such as the right-to-left mark and zero width joiner. They are
-     * not part of any term, but they would otherwise stay inside it and break exact matches.
-     */
-    private static boolean isSpaceOrInvisible(int codePoint) {
-        if (Character.isWhitespace(codePoint)) {
-            return true;
-        }
-        int type = Character.getType(codePoint);
-        return type == Character.SPACE_SEPARATOR || type == Character.FORMAT;
+        return HebrewChars.isSpaceOrInvisible(codePoint) || SAFE_EDGE_CHARS.indexOf(codePoint) >= 0;
     }
 
     private static boolean isEdgePunctuation(int codePoint) {
-        if (isSpaceOrInvisible(codePoint)) {
+        if (HebrewChars.isSpaceOrInvisible(codePoint)) {
             return true;
         }
         switch (Character.getType(codePoint)) {
