@@ -181,7 +181,7 @@ public class OnnxLemmatizer implements AutoCloseable {
         for (int i = 0; i < tokens.size(); i++) {
             List<MixedTokens.Part> parts = partsPerToken.get(i);
             if (parts == null) {
-                result.add(tokens.get(i));
+                result.add(MixedTokens.trimEdges(tokens.get(i)));
                 continue;
             }
             int count = MixedTokens.hebrewPartCount(parts);
@@ -241,12 +241,27 @@ public class OnnxLemmatizer implements AutoCloseable {
         return windows;
     }
 
+    /**
+     * True if the token ends a sentence: its last character is . ! ? the ellipsis or sof pasuq,
+     * ignoring any closing quote, bracket or invisible mark after it (a sentence end is often
+     * written as {@code ."} or {@code .)} or {@code ?"}).
+     */
     private static boolean endsSentence(String token) {
-        if (token.isEmpty()) {
+        int end = token.length();
+        while (end > 0 && isClosingCharacter(token.charAt(end - 1))) {
+            end--;
+        }
+        if (end == 0) {
             return false;
         }
-        char last = token.charAt(token.length() - 1);
-        return last == '.' || last == '!' || last == '?' || last == '\u05C3';
+        char last = token.charAt(end - 1);
+        return last == '.' || last == '!' || last == '?' || last == '\u2026' || last == '\u05C3';
+    }
+
+    private static boolean isClosingCharacter(char c) {
+        return "\"')]}\u00BB\u201D\u2019\u05F3\u05F4".indexOf(c) >= 0
+                || Character.getType(c) == Character.FORMAT
+                || Character.getType(c) == Character.SPACE_SEPARATOR;
     }
 
     private List<String> lemmatizeWindow(List<String> tokens, List<int[]> wordPieceIds, int from, int to)
@@ -296,7 +311,7 @@ public class OnnxLemmatizer implements AutoCloseable {
             if (logitIdx < topPredictions.length) {
                 lemmas.add(selectBestLemma(originalToken, topPredictions[logitIdx]));
             } else {
-                lemmas.add(originalToken);
+                lemmas.add(WordPieceTokenizer.normalize(originalToken));
             }
             logitIdx += wpIds.length;
         }
@@ -347,9 +362,11 @@ public class OnnxLemmatizer implements AutoCloseable {
         int significantCount = 0;
         Set<Character> extraSignificant = null;
 
-        // Compare letters in the form the model saw them (no niqqud, lowercase); the original
-        // token is still what we return when no candidate matches.
-        for (char c : WordPieceTokenizer.normalize(originalToken).toCharArray()) {
+        // Compare letters in the form the model saw them (no niqqud). That form is also what we
+        // return when no candidate matches: a token with niqqud left in would never match a
+        // query written without vowels.
+        String normalizedToken = WordPieceTokenizer.normalize(originalToken);
+        for (char c : normalizedToken.toCharArray()) {
             if (WEAK_LETTERS.contains(c)) {
                 continue;
             }
@@ -417,7 +434,7 @@ public class OnnxLemmatizer implements AutoCloseable {
             }
         }
 
-        return originalToken;
+        return normalizedToken;
     }
 
     private static Path extractModelResources(Path dataPath) throws IOException {

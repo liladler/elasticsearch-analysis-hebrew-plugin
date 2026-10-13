@@ -207,6 +207,136 @@ public class OnnxLemmatizerTests {
         assertEquals(List.of("ילד", "אלף-7", "אוכל"), lemmatizer.lemmatize(List.of("הילדים", "אלף-7", "אוכלים")));
     }
 
+    @Test
+    public void edgePunctuationIsDroppedFromNumbersAndLatinTokens() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data12").toPath());
+
+        assertEquals(List.of("2020", "2020", "2020", "T-204", "C#"),
+                lemmatizer.lemmatize(List.of("2020,", "2020.", "(2020)", "T-204.", "C#")));
+    }
+
+    @Test
+    public void invisibleMarksAroundAHebrewWordAreDropped() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data13").toPath());
+
+        assertEquals(List.of("ילד", "ילד", "ילד"),
+                lemmatizer.lemmatize(List.of("הילדים.\u200F", "הילדים\u00A0", "הילדים\u200E")));
+    }
+
+    @Test
+    public void theSameLetterAndNumberGivesTheSameTermInAnyContext() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data14").toPath());
+
+        // "ה-26" used to come out as ה-26, את-26, מה-26 or וה-26 depending on its neighbours.
+        for (List<String> context : List.of(
+                List.of("ה-26", "במאי"),
+                List.of("בתאריך", "ה-26"),
+                List.of("הוא", "אמר", "ה-26", "היום"),
+                List.of("את", "ה-26"))) {
+            List<String> lemmas = lemmatizer.lemmatize(context);
+            assertEquals("ה-26 in " + context, "ה-26", lemmas.get(context.indexOf("ה-26")));
+        }
+        assertEquals(List.of("ב-1985"), lemmatizer.lemmatize(List.of("ב-1985")));
+    }
+
+    @Test
+    public void aVowelizedTokenTheModelCannotMatchIsReturnedWithoutItsMarks() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data15").toPath());
+
+        // When no candidate matches, the token itself is returned. It must not carry niqqud,
+        // otherwise a query written without vowels can never match it.
+        for (String token : List.of("וַיִּקְרָא", "וַיַּבְדֵּל", "מְרַחֶפֶת", "בְּרֵאשִׁית")) {
+            String term = lemmatizer.lemmatize(List.of(token)).get(0);
+            assertEquals(token + " -> " + term, -1, firstHebrewMark(term));
+        }
+    }
+
+    private static int firstHebrewMark(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c >= 0x0591 && c <= 0x05C7 && c != 0x05BE && c != 0x05C0 && c != 0x05C3 && c != 0x05C6) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    @Test
+    public void sentenceEndsFollowedByAClosingQuoteOrBracketStillEndTheSentence() {
+        // 4 tokens of 3 pieces, limit 10: the window must end after the sentence end at index 1,
+        // whatever closing character follows the punctuation.
+        for (String end : List.of(".", "!", "?", "\u2026", "\u05C3", ".\"", ".)", "?\"", "!)", ".\u201D", ".\u200F")) {
+            List<String> tokens = List.of("a", "b" + end, "c", "d");
+            List<int[]> pieces = List.of(new int[3], new int[3], new int[3], new int[3]);
+
+            assertWindows(List.of(new int[]{0, 2}, new int[]{2, 4}), OnnxLemmatizer.planWindows(pieces, tokens, 10));
+        }
+    }
+
+    @Test
+    public void aTokenThatMerelyContainsPunctuationIsNotASentenceEnd() {
+        for (String token : List.of("3.5", "e.g", "a,b", "\"", ")", "...x")) {
+            List<String> tokens = List.of("a", token, "c", "d");
+            List<int[]> pieces = List.of(new int[4], new int[4], new int[4], new int[4]);
+
+            // no sentence end anywhere: plain token-boundary split, 10 pieces per window
+            assertWindows(List.of(new int[]{0, 2}, new int[]{2, 4}), OnnxLemmatizer.planWindows(pieces, tokens, 10));
+        }
+    }
+
+    @Test
+    public void anEllipsisFollowedByAnInvisibleMarkLosesTheMark() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data16").toPath());
+
+        assertEquals(List.of("\u2026", "\u2026", "2020"),
+                lemmatizer.lemmatize(List.of("\u2026\u200F", "\u200F\u2026", "2020\u200F")));
+    }
+
+    @Test
+    public void aWordWithAnInvisibleMarkInsideGivesTheSameTermAsWithout() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data19").toPath());
+
+        assertEquals(lemmatizer.lemmatize(List.of("שלום", "הילדים")),
+                lemmatizer.lemmatize(List.of("של\u200Fום", "הילד\u200Dים")));
+    }
+
+    @Test
+    public void wordsWithGershayimOrGereshComeOutWithoutThem() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data17").toPath());
+
+        assertEquals(List.of("צהל", "גוב"), lemmatizer.lemmatize(List.of("צה\u05F4ל", "ג\u05F3וב")));
+    }
+
+    @Test
+    public void everySpellingOfAnAcronymGivesTheSameTerm() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data18").toPath());
+
+        // Searching with or without the mark, and with whichever quote character, must find the same documents.
+        for (String[] spellings : new String[][]{
+                {"ארה\u05F4ב", "ארהב", "ארה\"ב", "ארה\u201Dב"},
+                {"צה\u05F4ל", "צהל", "צה\"ל", "צה\u201Dל"},
+                {"ד\u05F4ר", "דר", "ד\"ר", "ד\u201Dר"},
+                {"ג\u05F3וב", "גוב", "ג'וב", "ג\u2019וב"}}) {
+            List<String> expected = lemmatizer.lemmatize(List.of(spellings[1]));
+            for (String spelling : spellings) {
+                assertEquals(spelling + " must give the same term as " + spellings[1],
+                        expected, lemmatizer.lemmatize(List.of(spelling)));
+            }
+        }
+    }
+
+    @Test
+    public void anAcronymThatBecomesAnOrdinaryWordIsNotDeletedAsAStopword() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data20").toPath());
+        Stopwords stopwords = new Stopwords();
+
+        // עו"ד (lawyer) loses its quote mark and becomes עוד; heb_stopwords must not then remove it.
+        for (String spelling : new String[]{"עו\"ד", "עו\u05F4ד", "עו\u201Dד"}) {
+            String term = lemmatizer.lemmatize(List.of(spelling)).get(0);
+            assertTrue(spelling + " -> " + term + " must survive heb_stopwords", stopwords.isNotStopword(term));
+        }
+    }
+
     private static void assertWindows(List<int[]> expected, List<int[]> actual) {
         assertEquals("window count", expected.size(), actual.size());
         for (int i = 0; i < expected.size(); i++) {

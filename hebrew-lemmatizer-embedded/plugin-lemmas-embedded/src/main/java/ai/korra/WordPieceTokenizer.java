@@ -54,7 +54,7 @@ public class WordPieceTokenizer {
     }
 
     /**
-     * Removes Hebrew niqqud and cantillation marks, and decomposes Hebrew presentation forms, so
+     * Removes Hebrew niqqud, cantillation marks and quote-like marks inside words, and decomposes Hebrew presentation forms, so
      * vowelized text reaches the vocabulary lookup the way the model's own tokenizer.json
      * (NFD, StripAccents) presents it. Without this a word such as "שְׁלוֹם" fails to match and
      * collapses to a single letter.
@@ -70,7 +70,7 @@ public class WordPieceTokenizer {
         boolean needed = false;
         for (int i = 0; i < word.length(); i++) {
             char c = word.charAt(i);
-            if ((c >= 0x0591 && c <= 0x05C7) || (c >= 0xFB1D && c <= 0xFB4F)) {
+            if ((c >= 0x0591 && c <= 0x05C7) || (c >= 0xFB1D && c <= 0xFB4F) || isQuoteLike(c)) {
                 needed = true;
                 break;
             }
@@ -94,10 +94,27 @@ public class WordPieceTokenizer {
         return builder.toString();
     }
 
+    /**
+     * The characters Hebrew writes an acronym or loanword with: gershayim (U+05F4) and geresh
+     * (U+05F3), the ASCII quote and apostrophe, and the curly quotes word processors substitute for
+     * them. They are the same thing, but the model's vocabulary knows only the ASCII ones (and
+     * only for the acronyms it happened to see), so every spelling used to give a different term
+     * and a word written with the others was split into fragments, of which only the first
+     * survived. They are dropped, so a word is looked up as its letters, and searching with or
+     * without the mark, or with any of these characters, finds the same documents.
+     *
+     * <p>Only words that contain a Hebrew letter reach this code, and a quote at the edge of a word
+     * is trimmed before that, so this only ever removes marks inside a word.
+     */
+    private static boolean isQuoteLike(char c) {
+        return c == '\u05F3' || c == '\u05F4' || c == '"' || c == '\''
+                || c == '\u2018' || c == '\u2019' || c == '\u201C' || c == '\u201D';
+    }
+
     private static void appendUnlessHebrewMark(StringBuilder builder, char c) {
         boolean hebrewMark = c >= 0x0591 && c <= 0x05C7
                 && Character.getType(c) == Character.NON_SPACING_MARK;
-        if (hebrewMark == false) {
+        if (hebrewMark == false && isQuoteLike(c) == false) {
             builder.append(c);
         }
     }
