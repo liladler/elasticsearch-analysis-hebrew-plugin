@@ -20,7 +20,6 @@ import org.apache.lucene.analysis.tokenattributes.TypeAttribute;
 public class HebTokenFilter extends TokenFilter {
 
     private OnnxLemmatizer lemmatizer;
-    private final HebDebugger debugger = new HebDebugger();
 
     private final CharTermAttribute termAttr = addAttribute(CharTermAttribute.class);
     private final OffsetAttribute offsetAttr = addAttribute(OffsetAttribute.class);
@@ -62,12 +61,12 @@ public class HebTokenFilter extends TokenFilter {
         }
         if (!initialized) {
             try {
-                debugger.debugPrint("Initializing embedded ONNX lemmatizer");
+                HebDebugger.log("Initializing embedded ONNX lemmatizer");
                 lemmatizer = OnnxLemmatizer.getInstance(dataPath, positionBudget);
                 initialized = true;
-                debugger.debugPrint("ONNX lemmatizer ready");
+                HebDebugger.log("ONNX lemmatizer ready");
             } catch (Exception e) {
-                debugger.debugPrint("Initialization failed: " + e.getMessage());
+                HebDebugger.log("Initialization failed: " + e.getMessage());
                 throw new IOException("Failed to initialize embedded lemmatizer", e);
             }
         }
@@ -121,7 +120,7 @@ public class HebTokenFilter extends TokenFilter {
                             : lemmatizer.lemmatize(terms);
             lemmaIndex = 0;
         } catch (Exception e) {
-            debugger.debugPrint("Lemmatization error: " + e.getMessage());
+            HebDebugger.log("Lemmatization error: " + e.getMessage());
             lemmaList = new ArrayList<>(terms);
             lemmaIndex = 0;
         }

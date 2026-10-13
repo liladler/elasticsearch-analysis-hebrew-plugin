@@ -210,25 +210,24 @@ public class OnnxLemmatizer implements AutoCloseable {
 
     private List<String> lemmatizeWindow(List<String> tokens, List<int[]> wordPieceIds, int from, int to)
             throws OrtException {
-        List<Integer> allIds = new ArrayList<>();
-        allIds.add(clsTokenId);
+        int seqLen = 2;
         for (int i = from; i < to; i++) {
-            for (int id : wordPieceIds.get(i)) {
-                allIds.add(id);
-            }
+            seqLen += wordPieceIds.get(i).length;
         }
-        allIds.add(sepTokenId);
 
-        int seqLen = allIds.size();
+        // [CLS] pieces... [SEP], every position attended to, one segment (token type 0).
         long[][] inputIds = new long[1][seqLen];
         long[][] attentionMask = new long[1][seqLen];
         long[][] tokenTypeIds = new long[1][seqLen];
-
-        for (int i = 0; i < seqLen; i++) {
-            inputIds[0][i] = allIds.get(i);
-            attentionMask[0][i] = 1;
-            tokenTypeIds[0][i] = 0;
+        int position = 0;
+        inputIds[0][position++] = clsTokenId;
+        for (int i = from; i < to; i++) {
+            for (int id : wordPieceIds.get(i)) {
+                inputIds[0][position++] = id;
+            }
         }
+        inputIds[0][position] = sepTokenId;
+        Arrays.fill(attentionMask[0], 1);
 
         long[][] topPredictions;
         int taken = limiter.acquire(seqLen);

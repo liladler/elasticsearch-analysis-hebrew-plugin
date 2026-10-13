@@ -22,17 +22,17 @@ import java.util.Map;
  */
 public class WordPieceTokenizer {
 
+    private static final int MAX_INPUT_CHARS_PER_WORD = 100;
+
     private final Map<String, Integer> vocab;
     private final String[] reverseVocab;
     private final int unkTokenId;
-    private final int maxInputCharsPerWord;
 
     public WordPieceTokenizer(String tokenizerJsonPath) throws java.io.IOException {
         this(Files.newInputStream(Path.of(tokenizerJsonPath)));
     }
 
     public WordPieceTokenizer(InputStream inputStream) throws java.io.IOException {
-        this.maxInputCharsPerWord = 100;
         this.vocab = new HashMap<>();
 
         Gson gson = new Gson();
@@ -130,7 +130,7 @@ public class WordPieceTokenizer {
         }
 
         char[] chars = word.toCharArray();
-        if (chars.length > maxInputCharsPerWord) {
+        if (chars.length > MAX_INPUT_CHARS_PER_WORD) {
             tokens.add(unkTokenId);
             return toIntArray(tokens);
         }

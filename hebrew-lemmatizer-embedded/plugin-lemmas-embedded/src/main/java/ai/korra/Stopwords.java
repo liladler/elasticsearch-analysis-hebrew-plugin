@@ -6,8 +6,7 @@ import java.util.Set;
 
 public class Stopwords {
 
-    private final HebDebugger debugger = new HebDebugger();
-    private final Set<String> stopwordSet = new HashSet<>(Arrays.asList(
+    private static final Set<String> STOPWORDS = new HashSet<>(Arrays.asList(
             "אבל", "או", "אחר", "אך", "אל", "אם", "את", "בין", "גם", "דרך", "הוא",
             "היה", "זאת", "זה", "יותר", "יש", "כי", "כך", "כן", "לא", "לפני", "מה",
             "מי", "עד", "על", "עם", "רק", "של", "שם", "אדם", "אותה", "אותו", "אותם",
@@ -19,10 +18,10 @@ public class Stopwords {
     ));
 
     public boolean isNotStopword(String term) {
-        if (stopwordSet.contains(term)) {
+        if (STOPWORDS.contains(term)) {
             if (HebDebugger.isDebugEnabled()) {
                 String reversedText = new StringBuilder(term).reverse().toString();
-                debugger.debugPrint("Heb stopwords found and removed : " + reversedText);
+                HebDebugger.log("Heb stopwords found and removed : " + reversedText);
             }
             return false;
         }
