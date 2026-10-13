@@ -159,8 +159,9 @@ final class MixedTokens {
     }
 
     private static boolean isEmbeddedQuote(int codePoint) {
-        return codePoint == '\'' || codePoint == '"' || codePoint == '’'
-                || codePoint == '׳' || codePoint == '״';
+        return codePoint == '\'' || codePoint == '"' || codePoint == '\u2019' || codePoint == '\u2018'
+                || codePoint == '\u201C' || codePoint == '\u201D'
+                || codePoint == '\u05F3' || codePoint == '\u05F4';
     }
 
     /** Sentence punctuation, quotes and brackets that may surround a token without being part of it. */
