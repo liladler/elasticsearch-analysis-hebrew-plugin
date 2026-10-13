@@ -61,7 +61,7 @@ public class OnnxLemmatizerTests {
         Files.writeString(staleDir.resolve("model.onnx"), "stale");
         Path legacyModel = Files.writeString(cacheDir.resolve("model.onnx"), "legacy");
 
-        OnnxLemmatizer.cleanupStaleCacheEntries(cacheDir, activeDir);
+        ModelCache.cleanupStaleEntries(cacheDir, activeDir);
 
         assertTrue(Files.exists(activeDir));
         assertTrue(Files.exists(activeModel));
@@ -145,7 +145,7 @@ public class OnnxLemmatizerTests {
         List<String> tokens = List.of("אחד.", "שניים!", "שלושה?");
         List<int[]> pieces = List.of(new int[1], new int[1], new int[1]);
 
-        assertWindows(List.of(new int[]{0, 3}), OnnxLemmatizer.planWindows(pieces, tokens, 510));
+        assertWindows(List.of(new int[]{0, 3}), WindowPlanner.plan(pieces, tokens, 510));
     }
 
     @Test
@@ -155,7 +155,7 @@ public class OnnxLemmatizerTests {
         List<String> tokens = List.of("a", "b.", "c", "d");
         List<int[]> pieces = List.of(new int[3], new int[3], new int[3], new int[3]);
 
-        assertWindows(List.of(new int[]{0, 2}, new int[]{2, 4}), OnnxLemmatizer.planWindows(pieces, tokens, 10));
+        assertWindows(List.of(new int[]{0, 2}, new int[]{2, 4}), WindowPlanner.plan(pieces, tokens, 10));
     }
 
     @Test
@@ -164,7 +164,7 @@ public class OnnxLemmatizerTests {
         List<int[]> pieces = List.of(new int[4], new int[4], new int[4], new int[4], new int[4]);
 
         assertWindows(List.of(new int[]{0, 2}, new int[]{2, 4}, new int[]{4, 5}),
-                OnnxLemmatizer.planWindows(pieces, tokens, 10));
+                WindowPlanner.plan(pieces, tokens, 10));
     }
 
     @Test
@@ -176,7 +176,7 @@ public class OnnxLemmatizerTests {
             pieces.add(new int[1 + (i % 5)]);
         }
 
-        List<int[]> windows = OnnxLemmatizer.planWindows(pieces, tokens, 510);
+        List<int[]> windows = WindowPlanner.plan(pieces, tokens, 510);
 
         int expectedStart = 0;
         for (int[] window : windows) {
@@ -296,7 +296,7 @@ public class OnnxLemmatizerTests {
             List<String> tokens = List.of("a", "b" + end, "c", "d");
             List<int[]> pieces = List.of(new int[3], new int[3], new int[3], new int[3]);
 
-            assertWindows(List.of(new int[]{0, 2}, new int[]{2, 4}), OnnxLemmatizer.planWindows(pieces, tokens, 10));
+            assertWindows(List.of(new int[]{0, 2}, new int[]{2, 4}), WindowPlanner.plan(pieces, tokens, 10));
         }
     }
 
@@ -307,7 +307,7 @@ public class OnnxLemmatizerTests {
             List<int[]> pieces = List.of(new int[4], new int[4], new int[4], new int[4]);
 
             // no sentence end anywhere: plain token-boundary split, 10 pieces per window
-            assertWindows(List.of(new int[]{0, 2}, new int[]{2, 4}), OnnxLemmatizer.planWindows(pieces, tokens, 10));
+            assertWindows(List.of(new int[]{0, 2}, new int[]{2, 4}), WindowPlanner.plan(pieces, tokens, 10));
         }
     }
 

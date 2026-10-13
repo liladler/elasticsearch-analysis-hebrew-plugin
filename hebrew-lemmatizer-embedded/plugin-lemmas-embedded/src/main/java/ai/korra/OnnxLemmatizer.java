@@ -11,20 +11,13 @@ import ai.onnxruntime.TensorInfo;
 import ai.onnxruntime.ValueInfo;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Hebrew lemmatizer using ONNX Runtime for inference.
@@ -34,13 +27,11 @@ public class OnnxLemmatizer implements AutoCloseable {
     private static volatile OnnxLemmatizer instance;
     private static final Object LOCK = new Object();
     private static final System.Logger LOGGER = System.getLogger(OnnxLemmatizer.class.getName());
-    private static final String CACHE_DIRECTORY = "heb-lemmatizer";
-    private static final String CACHE_KEY_RESOURCE = "model-cache-key.txt";
 
     private final OrtEnvironment env;
     private final OrtSession session;
     private final WordPieceTokenizer tokenizer;
-    private final String[] vocab;
+    private final LemmaSelector selector;
     private final InferenceLimiter limiter;
 
     private final java.util.concurrent.atomic.AtomicLong windowFailures = new java.util.concurrent.atomic.AtomicLong();
@@ -48,10 +39,6 @@ public class OnnxLemmatizer implements AutoCloseable {
     private final int clsTokenId;
     private final int sepTokenId;
 
-    private static final Set<Character> WEAK_LETTERS = Set.of('א', 'ה', 'ו', 'י');
-    private static final int HEBREW_START = 0x0590;
-    private static final int HEBREW_END = 0x05FF;
-    private static final int HEBREW_RANGE = HEBREW_END - HEBREW_START + 1;
     private static final int PREDICTIONS_PER_TOKEN = 3;
     // BERT position embeddings stop at 512; two positions go to [CLS] and [SEP].
     static final int MAX_SEQUENCE_LENGTH = 512;
@@ -77,7 +64,7 @@ public class OnnxLemmatizer implements AutoCloseable {
 
             Path tokenizerPath = modelDir.resolve("tokenizer.json");
             this.tokenizer = new WordPieceTokenizer(tokenizerPath.toString());
-            this.vocab = tokenizer.getVocab();
+            this.selector = new LemmaSelector(tokenizer.getVocab());
 
             this.clsTokenId = tokenizer.getTokenId("[CLS]");
             this.sepTokenId = tokenizer.getTokenId("[SEP]");
@@ -106,7 +93,7 @@ public class OnnxLemmatizer implements AutoCloseable {
         if (instance == null) {
             synchronized (LOCK) {
                 if (instance == null) {
-                    Path modelDir = extractModelResources(dataPath);
+                    Path modelDir = ModelCache.extract(dataPath);
                     OnnxLemmatizer candidate = new OnnxLemmatizer(modelDir, positionBudget);
                     int totalPositions = positionBudget + InferenceLimiter.SHORT_WINDOW_BUDGET;
                     LOGGER.log(System.Logger.Level.INFO,
@@ -116,7 +103,7 @@ public class OnnxLemmatizer implements AutoCloseable {
                                     + (totalPositions * InferenceLimiter.BYTES_PER_POSITION >> 20)
                                     + " MB of native memory at peak)");
                     try {
-                        cleanupStaleCacheEntries(modelDir.getParent(), modelDir);
+                        ModelCache.cleanupStaleEntries(modelDir.getParent(), modelDir);
                     } catch (IOException e) {
                         LOGGER.log(System.Logger.Level.WARNING,
                                 "Unable to remove stale Hebrew lemmatizer cache entries", e);
@@ -185,7 +172,7 @@ public class OnnxLemmatizer implements AutoCloseable {
                     sentenceView.add(part.text());
                 }
             }
-            if (endsSentence(token) && MixedTokens.hebrewPartCount(parts) > 0) {
+            if (WindowPlanner.endsSentence(token) && MixedTokens.hebrewPartCount(parts) > 0) {
                 int last = sentenceView.size() - 1;
                 sentenceView.set(last, sentenceView.get(last) + ".");
             }
@@ -215,70 +202,10 @@ public class OnnxLemmatizer implements AutoCloseable {
         }
 
         List<String> lemmas = new ArrayList<>(tokens.size());
-        for (int[] window : planWindows(wordPieceIds, sentenceView, MAX_PIECES_PER_WINDOW)) {
+        for (int[] window : WindowPlanner.plan(wordPieceIds, sentenceView, MAX_PIECES_PER_WINDOW)) {
             lemmas.addAll(lemmatizeWindow(tokens, wordPieceIds, window[0], window[1]));
         }
         return lemmas;
-    }
-
-    /**
-     * Splits tokens into consecutive windows of at most {@code maxPieces} word pieces. Returns
-     * {@code [startInclusive, endExclusive)} token index pairs covering every token.
-     *
-     * <p>When a window would overflow it ends after the last sentence-ending token it contains,
-     * if there is one, otherwise at the last token that still fits.
-     */
-    static List<int[]> planWindows(List<int[]> pieces, List<String> tokens, int maxPieces) {
-        List<int[]> windows = new ArrayList<>();
-        int start = 0;
-        int count = 0;
-        int lastSentenceEnd = -1;
-
-        for (int i = 0; i < tokens.size(); i++) {
-            int size = pieces.get(i).length;
-            while (count + size > maxPieces && count > 0) {
-                int cut = lastSentenceEnd >= start ? lastSentenceEnd + 1 : i;
-                windows.add(new int[]{start, cut});
-                start = cut;
-                count = 0;
-                lastSentenceEnd = -1;
-                for (int j = start; j < i; j++) {
-                    count += pieces.get(j).length;
-                    if (endsSentence(tokens.get(j))) {
-                        lastSentenceEnd = j;
-                    }
-                }
-            }
-            count += size;
-            if (endsSentence(tokens.get(i))) {
-                lastSentenceEnd = i;
-            }
-        }
-        windows.add(new int[]{start, tokens.size()});
-        return windows;
-    }
-
-    /**
-     * True if the token ends a sentence: its last character is . ! ? the ellipsis or sof pasuq,
-     * ignoring any closing quote, bracket or invisible mark after it (a sentence end is often
-     * written as {@code ."} or {@code .)} or {@code ?"}).
-     */
-    private static boolean endsSentence(String token) {
-        int end = token.length();
-        while (end > 0 && isClosingCharacter(token.charAt(end - 1))) {
-            end--;
-        }
-        if (end == 0) {
-            return false;
-        }
-        char last = token.charAt(end - 1);
-        return last == '.' || last == '!' || last == '?' || last == '\u2026' || last == '\u05C3';
-    }
-
-    private static boolean isClosingCharacter(char c) {
-        return "\"')]}\u00BB\u201D\u2019\u05F3\u05F4".indexOf(c) >= 0
-                || Character.getType(c) == Character.FORMAT
-                || Character.getType(c) == Character.SPACE_SEPARATOR;
     }
 
     private List<String> lemmatizeWindow(List<String> tokens, List<int[]> wordPieceIds, int from, int to)
@@ -329,7 +256,7 @@ public class OnnxLemmatizer implements AutoCloseable {
                 continue;
             }
             if (logitIdx < topPredictions.length) {
-                lemmas.add(selectBestLemma(originalToken, topPredictions[logitIdx]));
+                lemmas.add(selector.select(originalToken, topPredictions[logitIdx]));
             } else {
                 lemmas.add(WordPieceTokenizer.normalize(originalToken));
             }
@@ -373,164 +300,6 @@ public class OnnxLemmatizer implements AutoCloseable {
                     }
                 }
                 throw new OrtException("Unexpected output tensor format");
-            }
-        }
-    }
-
-    private String selectBestLemma(String originalToken, long[] topK) {
-        boolean[] significantHebrew = new boolean[HEBREW_RANGE];
-        int significantCount = 0;
-        Set<Character> extraSignificant = null;
-
-        // Compare letters in the form the model saw them (no niqqud). That form is also what we
-        // return when no candidate matches: a token with niqqud left in would never match a
-        // query written without vowels.
-        String normalizedToken = WordPieceTokenizer.normalize(originalToken);
-        for (char c : normalizedToken.toCharArray()) {
-            if (WEAK_LETTERS.contains(c)) {
-                continue;
-            }
-            if (c >= HEBREW_START && c <= HEBREW_END) {
-                int idx = c - HEBREW_START;
-                if (!significantHebrew[idx]) {
-                    significantHebrew[idx] = true;
-                    significantCount++;
-                }
-            } else {
-                if (extraSignificant == null) {
-                    extraSignificant = new HashSet<>();
-                }
-                if (extraSignificant.add(c)) {
-                    significantCount++;
-                }
-            }
-        }
-
-        for (long predictedId : topK) {
-            int predId = Math.toIntExact(predictedId);
-            if (predId < 0 || predId >= vocab.length) {
-                continue;
-            }
-
-            String candidate = vocab[predId];
-            if (candidate.startsWith("[") || candidate.startsWith("##")) {
-                continue;
-            }
-
-            int overlap = 0;
-            int candCount = 0;
-            boolean[] candHebrew = new boolean[HEBREW_RANGE];
-            Set<Character> candExtra = null;
-
-            for (char c : candidate.toCharArray()) {
-                if (WEAK_LETTERS.contains(c)) {
-                    continue;
-                }
-                if (c >= HEBREW_START && c <= HEBREW_END) {
-                    int idx = c - HEBREW_START;
-                    if (!candHebrew[idx]) {
-                        candHebrew[idx] = true;
-                        candCount++;
-                    }
-                    if (significantHebrew[idx]) {
-                        overlap++;
-                    }
-                } else {
-                    if (candExtra == null) {
-                        candExtra = new HashSet<>();
-                    }
-                    if (candExtra.add(c)) {
-                        candCount++;
-                        if (extraSignificant != null && extraSignificant.contains(c)) {
-                            overlap++;
-                        }
-                    }
-                }
-            }
-
-            int minRequired = Math.min(2, Math.min(significantCount, candCount));
-            if (overlap >= minRequired) {
-                return candidate;
-            }
-        }
-
-        return normalizedToken;
-    }
-
-    private static Path extractModelResources(Path dataPath) throws IOException {
-        String cacheKey = readResourceText(CACHE_KEY_RESOURCE).trim();
-        if (!cacheKey.matches("[0-9a-f]{64}")) {
-            throw new IOException("Invalid embedded model cache key: " + cacheKey);
-        }
-
-        Path cacheDir = dataPath.resolve(CACHE_DIRECTORY);
-        Path modelDir = cacheDir.resolve(cacheKey);
-        Files.createDirectories(modelDir);
-
-        String[] resources = {"model.onnx", "tokenizer.json"};
-        for (String resource : resources) {
-            extractResourceAtomically(resource, modelDir);
-        }
-
-        return modelDir;
-    }
-
-    private static void extractResourceAtomically(String resource, Path modelDir) throws IOException {
-        Path targetPath = modelDir.resolve(resource);
-        if (Files.isRegularFile(targetPath)) {
-            return;
-        }
-        if (Files.exists(targetPath)) {
-            throw new IOException("Model cache target is not a regular file: " + targetPath);
-        }
-
-        Path temporaryPath = Files.createTempFile(modelDir, resource + ".", ".tmp");
-        try (InputStream stream = openResource(resource)) {
-            Files.copy(stream, temporaryPath, StandardCopyOption.REPLACE_EXISTING);
-            try {
-                Files.move(temporaryPath, targetPath,
-                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(temporaryPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } finally {
-            Files.deleteIfExists(temporaryPath);
-        }
-    }
-
-    private static String readResourceText(String resource) throws IOException {
-        try (InputStream stream = openResource(resource)) {
-            return new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-        }
-    }
-
-    private static InputStream openResource(String resource) throws IOException {
-        String resourcePath = "model/" + resource;
-        InputStream stream = OnnxLemmatizer.class.getModule().getResourceAsStream(resourcePath);
-        if (stream == null) {
-            stream = OnnxLemmatizer.class.getClassLoader().getResourceAsStream(resourcePath);
-        }
-        if (stream == null) {
-            throw new IOException("Resource not found in JAR: " + resourcePath);
-        }
-        return stream;
-    }
-
-    static void cleanupStaleCacheEntries(Path cacheDir, Path activeModelDir) throws IOException {
-        Path activePath = activeModelDir.toAbsolutePath().normalize();
-        try (var entries = Files.list(cacheDir)) {
-            for (Path entry : entries.toList()) {
-                if (!entry.toAbsolutePath().normalize().equals(activePath)) {
-                    deleteRecursively(entry);
-                }
-            }
-        }
-    }
-
-    private static void deleteRecursively(Path path) throws IOException {
-        try (var paths = Files.walk(path)) {
-            for (Path entry : paths.sorted(Comparator.reverseOrder()).toList()) {
-                Files.deleteIfExists(entry);
             }
         }
     }
