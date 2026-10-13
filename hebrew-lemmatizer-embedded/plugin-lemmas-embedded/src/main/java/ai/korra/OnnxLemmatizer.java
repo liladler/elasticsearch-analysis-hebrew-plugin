@@ -41,6 +41,7 @@ public class OnnxLemmatizer implements AutoCloseable {
     private final OrtSession session;
     private final WordPieceTokenizer tokenizer;
     private final String[] vocab;
+    private final InferenceLimiter limiter;
 
     private final java.util.concurrent.atomic.AtomicLong windowFailures = new java.util.concurrent.atomic.AtomicLong();
 
@@ -55,16 +56,18 @@ public class OnnxLemmatizer implements AutoCloseable {
     // BERT position embeddings stop at 512; two positions go to [CLS] and [SEP].
     static final int MAX_SEQUENCE_LENGTH = 512;
     static final int MAX_PIECES_PER_WINDOW = MAX_SEQUENCE_LENGTH - 2;
+    static final int THREADS_PER_WINDOW = 2;
 
-    private OnnxLemmatizer(Path modelDir) throws OrtException, IOException {
+    private OnnxLemmatizer(Path modelDir, int positionBudget) throws OrtException, IOException {
         HebDebugger.log("Initializing OnnxLemmatizer from: " + modelDir);
+        this.limiter = new InferenceLimiter(positionBudget);
 
         this.env = OrtEnvironment.getEnvironment();
 
         OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
         opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
         opts.setInterOpNumThreads(1);
-        opts.setIntraOpNumThreads(2);
+        opts.setIntraOpNumThreads(THREADS_PER_WINDOW);
 
         Path modelPath = modelDir.resolve("model.onnx");
         this.session = env.createSession(modelPath.toString(), opts);
@@ -92,12 +95,26 @@ public class OnnxLemmatizer implements AutoCloseable {
         }
     }
 
-    public static OnnxLemmatizer getInstance(Path dataPath) throws OrtException, IOException {
+    /**
+     * Returns the node's lemmatizer, creating it on first use.
+     *
+     * @param positionBudget model positions that may be processed at once; see
+     *                       {@link InferenceLimiter#budgetFor}. Only the first call's value is used,
+     *                       since there is one model per node.
+     */
+    public static OnnxLemmatizer getInstance(Path dataPath, int positionBudget) throws OrtException, IOException {
         if (instance == null) {
             synchronized (LOCK) {
                 if (instance == null) {
                     Path modelDir = extractModelResources(dataPath);
-                    OnnxLemmatizer candidate = new OnnxLemmatizer(modelDir);
+                    OnnxLemmatizer candidate = new OnnxLemmatizer(modelDir, positionBudget);
+                    int totalPositions = positionBudget + InferenceLimiter.SHORT_WINDOW_BUDGET;
+                    LOGGER.log(System.Logger.Level.INFO,
+                            "Hebrew lemmatizer limited to " + positionBudget + " model positions at once, plus "
+                                    + InferenceLimiter.SHORT_WINDOW_BUDGET + " for windows of up to "
+                                    + InferenceLimiter.SHORT_WINDOW + " positions (about "
+                                    + (totalPositions * InferenceLimiter.BYTES_PER_POSITION >> 20)
+                                    + " MB of native memory at peak)");
                     try {
                         cleanupStaleCacheEntries(modelDir.getParent(), modelDir);
                     } catch (IOException e) {
@@ -287,6 +304,7 @@ public class OnnxLemmatizer implements AutoCloseable {
         }
 
         long[][] topPredictions;
+        int taken = limiter.acquire(seqLen);
         try {
             topPredictions = runInference(inputIds, attentionMask, tokenTypeIds);
         } catch (OrtException | RuntimeException e) {
@@ -294,6 +312,8 @@ public class OnnxLemmatizer implements AutoCloseable {
             // the caller swallowed it silently and indexed the whole value unlemmatized.
             warnWindowFailed(seqLen, from, to, e);
             return new ArrayList<>(tokens.subList(from, to));
+        } finally {
+            limiter.release(taken);
         }
 
         List<String> lemmas = new ArrayList<>(to - from);

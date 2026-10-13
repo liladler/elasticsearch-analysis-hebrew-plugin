@@ -275,6 +275,42 @@ before `heb_lemmas` with a `pattern_replace` char filter:
 - For identifiers that must match exactly (call signs, unit ids), use a `keyword` field rather than
   this analyzer: after splitting, a search for `204` also finds `F-204`.
 
+### Native memory
+
+The model runs outside the JVM heap, so its memory is not covered by the heap size or by
+Elasticsearch's circuit breakers. Each running window of a long value takes about 0.35 GB at peak,
+and earlier releases let every write thread run one at the same time: on a 6 GB node with a 3 GB
+heap and 8 write threads, values near or over 512 word pieces got Elasticsearch killed for running
+out of memory.
+
+The plugin now caps how much text the model processes at once, the way Elasticsearch's ML nodes cap
+their native memory. The cap is set at startup from the node's memory (including
+`es.total_memory_bytes`), heap and processors: half of the memory left after the heap and about
+1.5 GB of JVM and model overhead, never more windows than the processors can run, and always at
+least one full window. Windows of up to 64 positions, which covers nearly every search query,
+have a separate budget of 256 positions (about 175 MB), so a query never waits behind long values
+being indexed. Elasticsearch's ML nodes get the same effect by deploying a model twice, once for
+ingest and once for search. The node log reports both:
+
+```
+Hebrew lemmatizer limited to 1123 model positions at once, plus 256 for windows of up to 64 positions (about 942 MB of native memory at peak)
+```
+
+| Node | Cap (plus 256 for short windows) |
+| --- | --- |
+| 6 GB, 3 GB heap, 8 CPUs | 1123 positions (about 2 full windows) |
+| 8 GB, 4 GB heap, 8 CPUs | 1872 positions (about 3.5 full windows) |
+| 16 GB, 8 GB heap, 8 CPUs | 2048 positions (4 full windows, limited by the CPUs) |
+
+Short values take few positions and still run side by side; only long windows wait for each
+other. When a node is at its cap, indexing slows down the normal Elasticsearch way (the write
+queue fills and clients get 429 responses) instead of the node being killed. To index more long
+documents per second, add data nodes or CPUs, or set `number_of_replicas` to 0 during a bulk load,
+since every replica runs the model again. Keep the heap at the default 50% of memory: a larger heap
+leaves less room for the model.
+
+This does not change any indexed terms, so it does not need a reindex.
+
 ## Upgrade to a newer ES version (e.g., 9.3)
 
 1. Run `./scripts/build_plugin_linux.sh --es-version <ES>`
