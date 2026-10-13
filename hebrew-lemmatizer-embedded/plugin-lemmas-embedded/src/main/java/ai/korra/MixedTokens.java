@@ -45,6 +45,12 @@ final class MixedTokens {
             return null;
         }
         String core = token.substring(start, end);
+        if (core.codePoints().anyMatch(MixedTokens::isHebrewLetter)) {
+            // Right-to-left and left-to-right marks, joiners and the like are invisible and mean
+            // nothing in a term, but inside a word they split it for the model and break exact
+            // matches, so a word with one stray mark never matched the same word without it.
+            core = removeInvisibleCharacters(core);
+        }
 
         List<Part> parts = new ArrayList<>();
         StringBuilder current = new StringBuilder();
@@ -133,6 +139,13 @@ final class MixedTokens {
             }
         }
         return count;
+    }
+
+    private static String removeInvisibleCharacters(String text) {
+        StringBuilder builder = new StringBuilder(text.length());
+        text.codePoints().filter(codePoint -> Character.getType(codePoint) != Character.FORMAT)
+                .forEach(builder::appendCodePoint);
+        return builder.toString();
     }
 
     private static boolean isHebrewLetter(int codePoint) {
