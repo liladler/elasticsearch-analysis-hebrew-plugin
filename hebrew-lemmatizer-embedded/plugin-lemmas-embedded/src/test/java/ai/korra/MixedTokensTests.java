@@ -70,6 +70,21 @@ public class MixedTokensTests {
     }
 
     @Test
+    public void invisibleMarksInsideAHebrewTokenAreRemoved() {
+        // Right-to-left and left-to-right marks and joiners carry no meaning in a term.
+        assertEquals("H:שלום", describe("של\u200Fום"));
+        assertEquals("H:שלום", describe("שלו\u200Dם"));
+        assertEquals("H:אלף|O:-7", describe("אלף\u200E-7"));
+        assertEquals("H:אלף|O:-7", describe("אלף-\u200F7"));
+    }
+
+    @Test
+    public void invisibleMarksInsideATokenWithoutHebrewAreLeftAlone() {
+        // Only edges are trimmed there; the inside of e.g. an emoji sequence must stay intact.
+        assertEquals("2\u200F0", MixedTokens.trimEdges("2\u200F0"));
+    }
+
+    @Test
     public void rebuildReplacesOnlyTheHebrewParts() {
         List<MixedTokens.Part> parts = MixedTokens.split("קריית-שמונה");
 

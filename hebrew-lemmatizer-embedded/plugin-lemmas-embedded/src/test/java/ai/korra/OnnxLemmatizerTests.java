@@ -292,6 +292,14 @@ public class OnnxLemmatizerTests {
                 lemmatizer.lemmatize(List.of("\u2026\u200F", "\u200F\u2026", "2020\u200F")));
     }
 
+    @Test
+    public void aWordWithAnInvisibleMarkInsideGivesTheSameTermAsWithout() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data19").toPath());
+
+        assertEquals(lemmatizer.lemmatize(List.of("שלום", "הילדים")),
+                lemmatizer.lemmatize(List.of("של\u200Fום", "הילד\u200Dים")));
+    }
+
     private static void assertWindows(List<int[]> expected, List<int[]> actual) {
         assertEquals("window count", expected.size(), actual.size());
         for (int i = 0; i < expected.size(); i++) {
