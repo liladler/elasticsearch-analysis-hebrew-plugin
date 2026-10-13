@@ -139,4 +139,19 @@ public class MixedTokensTests {
         // "במאי" is a real word and stays one; it is not mistaken for a prefix.
         assertEquals("H:במאי|O:-26", describe("במאי-26"));
     }
+
+    @Test
+    public void invisibleCharactersAreDroppedEvenWhenOnlyPunctuationRemains() {
+        // A token of punctuation and an invisible mark: the mark goes, the punctuation stays.
+        assertEquals("\u2026", MixedTokens.trimEdges("\u2026\u200F"));
+        assertEquals("\u2026", MixedTokens.trimEdges("\u200F\u2026"));
+        assertEquals("...", MixedTokens.trimEdges("...\u200E"));
+        assertEquals("-", MixedTokens.trimEdges("\u200F-\u200F"));
+    }
+
+    @Test
+    public void aTokenOfOnlyInvisibleCharactersIsKeptRatherThanEmptied() {
+        assertEquals("\u200F", MixedTokens.trimEdges("\u200F"));
+        assertEquals("\u200F\u200E", MixedTokens.trimEdges("\u200F\u200E"));
+    }
 }

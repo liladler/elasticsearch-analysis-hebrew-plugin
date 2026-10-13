@@ -157,19 +157,35 @@ final class MixedTokens {
     /**
      * Drops sentence punctuation, quotes, brackets and invisible characters from both ends of a
      * token that contains no Hebrew letter, so "2020," is the same term as "2020". Symbols that can
-     * be part of a term ("C#", "50%", "@user", "AT&T") are left alone. If nothing would remain the
-     * token is returned unchanged.
+     * be part of a term ("C#", "50%", "@user", "AT&T") are left alone. A token made only of
+     * punctuation keeps its punctuation (an invisible mark next to it is still dropped), and a
+     * token made only of invisible marks is returned unchanged rather than emptied.
      */
     static String trimEdges(String token) {
+        String trimmed = trimEnds(token, false);
+        if (trimmed.isEmpty() == false) {
+            return trimmed;
+        }
+        // Only punctuation and invisible marks were left. Keep the punctuation, but an invisible
+        // mark is never part of a term, so it is dropped here as well ("\u2026" + RLM -> "\u2026").
+        String withoutInvisibles = trimEnds(token, true);
+        return withoutInvisibles.isEmpty() ? token : withoutInvisibles;
+    }
+
+    private static String trimEnds(String token, boolean invisiblesOnly) {
         int start = 0;
         int end = token.length();
-        while (start < end && isSafeEdge(token.codePointAt(start))) {
+        while (start < end && isTrimmable(token.codePointAt(start), invisiblesOnly)) {
             start += Character.charCount(token.codePointAt(start));
         }
-        while (end > start && isSafeEdge(token.codePointBefore(end))) {
+        while (end > start && isTrimmable(token.codePointBefore(end), invisiblesOnly)) {
             end -= Character.charCount(token.codePointBefore(end));
         }
-        return start >= end ? token : token.substring(start, end);
+        return token.substring(start, end);
+    }
+
+    private static boolean isTrimmable(int codePoint, boolean invisiblesOnly) {
+        return invisiblesOnly ? isSpaceOrInvisible(codePoint) : isSafeEdge(codePoint);
     }
 
     private static boolean isSafeEdge(int codePoint) {
