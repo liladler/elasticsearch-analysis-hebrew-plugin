@@ -97,8 +97,16 @@ def add_topk_output(input_path: Path, output_path: Path, k: int = 3):
     onnx.save(model, str(output_path))
 
 
-def load_head_keep_ids(path: Path = HEAD_KEEP_PATH) -> np.ndarray:
-    ids = [int(line) for line in path.read_text(encoding="utf-8").splitlines() if line and not line.startswith("#")]
+def load_head_keep_ids(vocab_path: Path, path: Path = HEAD_KEEP_PATH) -> np.ndarray:
+    """Read the kept vocabulary ids, after checking they were chosen for this exact vocabulary."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    expected = next((line.split(":", 1)[1].strip() for line in lines if line.startswith("# vocab.txt sha256:")), None)
+    if expected is None:
+        raise ValueError(f"{path} does not record the vocabulary it was made for")
+    actual = hashlib.sha256(vocab_path.read_bytes()).hexdigest()
+    if actual != expected:
+        raise ValueError(f"{path} was made for a different vocabulary (vocab.txt sha256 {actual}, expected {expected})")
+    ids = [int(line) for line in lines if line and not line.startswith("#")]
     return np.array(sorted(set(ids)), dtype=np.int64)
 
 
@@ -115,7 +123,13 @@ def prune_output_head(model_path: Path, keep_ids: np.ndarray):
     nodes = list(graph.node)
     initializers = {init.name: init for init in graph.initializer}
 
-    head = next(n for n in nodes if n.op_type == "MatMulInteger" and n.name.endswith("decoder/MatMul_quant"))
+    def find(description, predicate):
+        node = next((n for n in nodes if predicate(n)), None)
+        if node is None:
+            raise ValueError(f"Cannot prune the output head: no {description} in the exported graph")
+        return node
+
+    head = find("head MatMulInteger", lambda n: n.op_type == "MatMulInteger" and n.name.endswith("decoder/MatMul_quant"))
     weight = numpy_helper.to_array(initializers[head.input[1]])
     vocab_size = weight.shape[1]
     if keep_ids.min() < 0 or keep_ids.max() >= vocab_size:
@@ -133,14 +147,14 @@ def prune_output_head(model_path: Path, keep_ids: np.ndarray):
     if zero_point.ndim == 1:
         replace(head.input[3], zero_point[keep_ids])
 
-    scales = next(n for n in nodes if n.name.endswith("decoder/MatMul_quant_scales_mul"))
-    bias = next(n for n in nodes if n.name.endswith("decoder/Add"))
+    scales = find("head scale multiplication", lambda n: n.name.endswith("decoder/MatMul_quant_scales_mul"))
+    bias = find("head bias addition", lambda n: n.name.endswith("decoder/Add"))
     for node in (scales, bias):
         for name in node.input:
             if name in initializers and list(initializers[name].dims) == [vocab_size]:
                 replace(name, numpy_helper.to_array(initializers[name])[keep_ids])
 
-    topk = next(n for n in nodes if n.op_type == "TopK")
+    topk = find("TopK", lambda n: n.op_type == "TopK")
     final_indices = topk.output[1]
     topk.output[1] = "pruned_topk_indices"
     graph.initializer.append(numpy_helper.from_array(keep_ids, "head_keep_ids"))
@@ -253,7 +267,7 @@ def export_model():
         print("Adding sorted top-three output to the ONNX graph")
         add_topk_output(quantized_file, output_model)
         print("Pruning the output head")
-        prune_output_head(output_model, load_head_keep_ids())
+        prune_output_head(output_model, load_head_keep_ids(vocab_path))
         print(f"Saved quantized ONNX model to {output_model}")
 
         cache_key = calculate_cache_key(output_model, tokenizer_path)
