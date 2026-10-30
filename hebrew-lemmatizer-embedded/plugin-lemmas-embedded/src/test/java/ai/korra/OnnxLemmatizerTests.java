@@ -84,6 +84,29 @@ public class OnnxLemmatizerTests {
     }
 
     @Test
+    public void anAcronymWithAPrefixMatchesTheBareAcronym() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data12").toPath());
+
+        // The quote is what lets the model recognise an acronym and strip its prefix, so it has to
+        // reach the model. It must not reach the index: the term is the same with any spelling.
+        assertEquals(List.of("ארהב"), lemmatizer.lemmatize(List.of("ארה\"ב")));
+        for (String doc : new String[]{"בארה\"ב", "ובארה\"ב", "מארה\"ב", "בארה\u05F4ב", "בארה\u201Dב"}) {
+            assertEquals(doc, List.of("ארהב"), lemmatizer.lemmatize(List.of(doc)));
+        }
+        assertEquals(lemmatizer.lemmatize(List.of("צה\"ל")), lemmatizer.lemmatize(List.of("בצה\"ל")));
+        assertEquals(lemmatizer.lemmatize(List.of("צה\"ל")), lemmatizer.lemmatize(List.of("צה\u05F4ל")));
+    }
+
+    @Test
+    public void noLemmaKeepsTheQuoteOfAnAcronym() throws Exception {
+        OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data13").toPath());
+
+        for (String lemma : lemmatizer.lemmatize(List.of("המפכ\"ל", "אמר", "ד\"ר", "יו\"ר", "ח\u05F4כ"))) {
+            assertFalse(lemma, lemma.contains("\""));
+        }
+    }
+
+    @Test
     public void aTokenMadeOnlyOfMarksDoesNotShiftTheFollowingLemmas() throws Exception {
         OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data2").toPath());
 
@@ -311,15 +334,17 @@ public class OnnxLemmatizerTests {
     public void everySpellingOfAnAcronymGivesTheSameTerm() throws Exception {
         OnnxLemmatizer lemmatizer = OnnxLemmatizer.getInstance(temporaryFolder.newFolder("data18").toPath());
 
-        // Searching with or without the mark, and with whichever quote character, must find the same documents.
+        // Whichever quote character is used, and for an apostrophe with or without the mark, a search
+        // must find the same documents. An acronym written without its quote at all is looked up as
+        // plain letters, which the model does not know as the acronym.
         for (String[] spellings : new String[][]{
-                {"ארה\u05F4ב", "ארהב", "ארה\"ב", "ארה\u201Dב"},
-                {"צה\u05F4ל", "צהל", "צה\"ל", "צה\u201Dל"},
-                {"ד\u05F4ר", "דר", "ד\"ר", "ד\u201Dר"},
-                {"ג\u05F3וב", "גוב", "ג'וב", "ג\u2019וב"}}) {
-            List<String> expected = lemmatizer.lemmatize(List.of(spellings[1]));
+                {"ארה\"ב", "ארה\u05F4ב", "ארה\u201Dב"},
+                {"צה\"ל", "צה\u05F4ל", "צה\u201Dל"},
+                {"ד\"ר", "ד\u05F4ר", "ד\u201Dר"},
+                {"גוב", "ג\u05F3וב", "ג'וב", "ג\u2019וב"}}) {
+            List<String> expected = lemmatizer.lemmatize(List.of(spellings[0]));
             for (String spelling : spellings) {
-                assertEquals(spelling + " must give the same term as " + spellings[1],
+                assertEquals(spelling + " must give the same term as " + spellings[0],
                         expected, lemmatizer.lemmatize(List.of(spelling)));
             }
         }
