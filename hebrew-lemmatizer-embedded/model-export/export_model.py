@@ -6,7 +6,8 @@ This script:
 1. Downloads the dicta-il/dictabert-lex model from HuggingFace
 2. Converts it to ONNX format with INT8 weight quantization
 3. Replaces the full logits output with the sorted top-three token IDs
-4. Copies the tokenizer.json for use by the Java plugin
+4. Prunes the output head to the vocabulary entries that are ever returned as a lemma
+5. Copies the tokenizer.json for use by the Java plugin
 """
 
 import os
@@ -19,11 +20,13 @@ import torch
 from transformers import AutoTokenizer, AutoModelForMaskedLM
 from optimum.onnxruntime import ORTModelForMaskedLM
 from onnxruntime.quantization import quantize_dynamic, QuantType
+import numpy as np
 import onnx
-from onnx import TensorProto, helper
+from onnx import TensorProto, helper, numpy_helper
 
 MODEL_NAME = "dicta-il/dictabert-lex"
 OUTPUT_DIR = Path(__file__).parent.parent / "plugin-lemmas-embedded" / "src" / "main" / "resources" / "model"
+HEAD_KEEP_PATH = Path(__file__).parent / "head-keep-48k.txt"
 
 
 def calculate_cache_key(*paths: Path) -> str:
@@ -71,6 +74,68 @@ def add_topk_output(input_path: Path, output_path: Path, k: int = 3):
     )
     onnx.checker.check_model(model)
     onnx.save(model, str(output_path))
+
+
+def load_head_keep_ids(path: Path = HEAD_KEEP_PATH) -> np.ndarray:
+    ids = [int(line) for line in path.read_text(encoding="utf-8").splitlines() if line and not line.startswith("#")]
+    return np.array(sorted(set(ids)), dtype=np.int64)
+
+
+def prune_output_head(model_path: Path, keep_ids: np.ndarray):
+    """Keep only the given vocabulary columns of the output head.
+
+    The head scores every vocabulary entry at every position, but only a fraction of them is ever
+    returned as a lemma. Slicing the weight, its per-channel zero point and scale, and the bias to the
+    kept columns makes the head several times smaller and faster. The top-three indices are mapped back
+    to the original vocabulary ids, so the plugin needs no change and still sees the same output.
+    """
+    model = onnx.load(str(model_path))
+    graph = model.graph
+    nodes = list(graph.node)
+    initializers = {init.name: init for init in graph.initializer}
+
+    head = next(n for n in nodes if n.op_type == "MatMulInteger" and n.name.endswith("decoder/MatMul_quant"))
+    weight = numpy_helper.to_array(initializers[head.input[1]])
+    vocab_size = weight.shape[1]
+    if keep_ids.min() < 0 or keep_ids.max() >= vocab_size:
+        raise ValueError(f"Head keep list does not fit the {vocab_size}-entry vocabulary")
+
+    def replace(name, array):
+        for i, init in enumerate(graph.initializer):
+            if init.name == name:
+                graph.initializer[i].CopyFrom(numpy_helper.from_array(array, name))
+                return
+        raise KeyError(name)
+
+    replace(head.input[1], np.ascontiguousarray(weight[:, keep_ids]))
+    zero_point = numpy_helper.to_array(initializers[head.input[3]])
+    if zero_point.ndim == 1:
+        replace(head.input[3], zero_point[keep_ids])
+
+    scales = next(n for n in nodes if n.name.endswith("decoder/MatMul_quant_scales_mul"))
+    bias = next(n for n in nodes if n.name.endswith("decoder/Add"))
+    for node in (scales, bias):
+        for name in node.input:
+            if name in initializers and list(initializers[name].dims) == [vocab_size]:
+                replace(name, numpy_helper.to_array(initializers[name])[keep_ids])
+
+    topk = next(n for n in nodes if n.op_type == "TopK")
+    final_indices = topk.output[1]
+    topk.output[1] = "pruned_topk_indices"
+    graph.initializer.append(numpy_helper.from_array(keep_ids, "head_keep_ids"))
+    nodes.append(helper.make_node("Gather", ["head_keep_ids", "pruned_topk_indices"], [final_indices], name="HeadKeepRemap"))
+    del graph.node[:]
+    graph.node.extend(nodes)
+
+    # Shapes recorded for the resized head are stale now.
+    value_info = [vi for vi in graph.value_info
+                  if "decoder" not in vi.name and "topk" not in vi.name.lower() and vi.name != final_indices]
+    del graph.value_info[:]
+    graph.value_info.extend(value_info)
+
+    onnx.checker.check_model(model)
+    onnx.save(model, str(model_path))
+    print(f"Pruned output head from {vocab_size} to {len(keep_ids)} vocabulary entries")
 
 
 def export_model():
@@ -146,6 +211,8 @@ def export_model():
         output_model = OUTPUT_DIR / "model.onnx"
         print("Adding sorted top-three output to the ONNX graph")
         add_topk_output(quantized_file, output_model)
+        print("Pruning the output head")
+        prune_output_head(output_model, load_head_keep_ids())
         print(f"Saved quantized ONNX model to {output_model}")
 
         cache_key = calculate_cache_key(output_model, tokenizer_path)
