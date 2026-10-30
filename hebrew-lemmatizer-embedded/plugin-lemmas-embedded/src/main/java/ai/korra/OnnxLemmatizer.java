@@ -309,9 +309,9 @@ public class OnnxLemmatizer implements AutoCloseable {
                 continue;
             }
             if (logitIdx < topPredictions.length) {
-                lemmas.add(selectBestLemma(originalToken, topPredictions[logitIdx]));
+                lemmas.add(WordPieceTokenizer.withoutDoubleQuotes(selectBestLemma(originalToken, topPredictions[logitIdx])));
             } else {
-                lemmas.add(WordPieceTokenizer.normalize(originalToken));
+                lemmas.add(WordPieceTokenizer.withoutDoubleQuotes(WordPieceTokenizer.normalize(originalToken)));
             }
             logitIdx += wpIds.length;
         }
