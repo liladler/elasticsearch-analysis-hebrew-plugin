@@ -57,8 +57,8 @@ public class OnnxLemmatizer implements AutoCloseable {
         opts.setIntraOpNumThreads(THREADS_PER_WINDOW);
         // On x86 CPUs without VNNI (AMD Zen 2 and 3, Intel before Cascade Lake) the default INT8
         // matmul kernel overflows its 16-bit accumulators, which silently corrupts the model's output:
-        // about 62% of the lemmas of the Tiny model came out wrong. This setting makes it use a
-        // kernel that does not overflow. It has no effect on ARM.
+        // about 2% of DictaBERT-Lex's lemmas came out wrong, and 62% of DictaBERT Tiny's. This
+        // setting makes it use a kernel that does not overflow. It has no effect on ARM.
         opts.addConfigEntry("session.x64quantprecision", "1");
 
         Path modelPath = modelDir.resolve("model.onnx");
