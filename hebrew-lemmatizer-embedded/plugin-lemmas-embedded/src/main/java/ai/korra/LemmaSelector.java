@@ -26,6 +26,10 @@ final class LemmaSelector {
      * other character only the first time.
      */
     String select(String originalToken, long[] topK) {
+        return WordPieceTokenizer.withoutDoubleQuotes(choose(originalToken, topK));
+    }
+
+    private String choose(String originalToken, long[] topK) {
         boolean[] significantHebrew = new boolean[HEBREW_RANGE];
         int significantCount = 0;
         Set<Character> extraSignificant = null;

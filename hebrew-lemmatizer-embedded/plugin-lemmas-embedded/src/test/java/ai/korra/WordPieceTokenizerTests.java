@@ -70,27 +70,43 @@ public class WordPieceTokenizerTests {
     }
 
     @Test
-    public void quotesAndApostrophesInsideAWordAreDropped() {
-        // Gershayim, geresh, the ASCII quote and apostrophe, and the curly quotes Word substitutes
-        // for them are all the same thing in a Hebrew acronym or loanword. The model's vocabulary
-        // knows only the ASCII ones, so each spelling used to give a different term.
+    public void everyDoubleQuoteInsideAWordBecomesTheAsciiOne() {
+        // Gershayim and the curly quotes Word substitutes for the ASCII quote are the same mark in
+        // a Hebrew acronym. The model's vocabulary knows the acronyms only with the ASCII one, so
+        // that is the form it is given.
         for (String quote : new String[]{"\u05F4", "\"", "\u201D", "\u201C"}) {
-            assertEquals("צהל", WordPieceTokenizer.normalize("צה" + quote + "ל"));
-            assertEquals("דר", WordPieceTokenizer.normalize("ד" + quote + "ר"));
-            assertEquals("ארהב", WordPieceTokenizer.normalize("ארה" + quote + "ב"));
+            assertEquals("צה\"ל", WordPieceTokenizer.normalize("צה" + quote + "ל"));
+            assertEquals("ד\"ר", WordPieceTokenizer.normalize("ד" + quote + "ר"));
+            assertEquals("ארה\"ב", WordPieceTokenizer.normalize("ארה" + quote + "ב"));
         }
+    }
+
+    @Test
+    public void apostrophesInsideAWordAreDropped() {
         for (String apostrophe : new String[]{"\u05F3", "'", "\u2019", "\u2018"}) {
             assertEquals("גוב", WordPieceTokenizer.normalize("ג" + apostrophe + "וב"));
         }
     }
 
     @Test
-    public void everySpellingOfAnAcronymEncodesTheSame() {
-        int[] plain = tokenizer.encode("ארהב");
+    public void asciiQuoteIsLeftAlone() {
+        String word = "ארה\"ב";
 
-        assertArrayEquals(plain, tokenizer.encode("ארה\u05F4ב"));
-        assertArrayEquals(plain, tokenizer.encode("ארה\"ב"));
-        assertArrayEquals(plain, tokenizer.encode("ארה\u201Dב"));
+        assertSame(word, WordPieceTokenizer.normalize(word));
+    }
+
+    @Test
+    public void everySpellingOfAnAcronymWithAQuoteEncodesTheSame() {
+        int[] ascii = tokenizer.encode("ארה\"ב");
+
+        assertArrayEquals(ascii, tokenizer.encode("ארה\u05F4ב"));
+        assertArrayEquals(ascii, tokenizer.encode("ארה\u201Dב"));
+    }
+
+    @Test
+    public void theIndexedFormHasNoDoubleQuote() {
+        assertEquals("ארהב", WordPieceTokenizer.withoutDoubleQuotes("ארה\"ב"));
+        assertSame("ארהב", WordPieceTokenizer.withoutDoubleQuotes("ארהב"));
     }
 
     @Test

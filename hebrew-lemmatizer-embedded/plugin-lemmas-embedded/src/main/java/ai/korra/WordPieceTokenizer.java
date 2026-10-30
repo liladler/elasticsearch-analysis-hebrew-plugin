@@ -54,7 +54,8 @@ public class WordPieceTokenizer {
     }
 
     /**
-     * Removes Hebrew niqqud, cantillation marks and quote-like marks inside words, and decomposes Hebrew presentation forms, so
+     * Removes Hebrew niqqud, cantillation marks and single quote-like marks inside words, writes double quote-like
+     * marks as the ASCII quote, and decomposes Hebrew presentation forms, so
      * vowelized text reaches the vocabulary lookup the way the model's own tokenizer.json
      * (NFD, StripAccents) presents it. Without this a word such as "שְׁלוֹם" fails to match and
      * collapses to a single letter.
@@ -71,7 +72,8 @@ public class WordPieceTokenizer {
         for (int i = 0; i < word.length(); i++) {
             char c = word.charAt(i);
             // The mark block is checked as a range here: a non-mark in it is just copied below.
-            if ((c >= 0x0591 && c <= 0x05C7) || HebrewChars.isPresentationForm(c) || HebrewChars.isQuoteLike(c)) {
+            if ((c >= 0x0591 && c <= 0x05C7) || HebrewChars.isPresentationForm(c)
+                    || (HebrewChars.isQuoteLike(c) && c != '"')) {
                 needed = true;
                 break;
             }
@@ -96,21 +98,37 @@ public class WordPieceTokenizer {
     }
 
     /**
-     * Drops niqqud and cantillation marks, and the quote-like marks Hebrew writes an acronym or
-     * loanword with ({@link HebrewChars#isQuoteLike}). Those marks are the same thing, but the
-     * model's vocabulary knows only the ASCII ones (and only for the acronyms it happened to see),
-     * so every spelling used to give a different term and a word written with the others was split
-     * into fragments, of which only the first survived. They are dropped, so a word is looked up as
-     * its letters, and searching with or without the mark, or with any of these characters, finds
-     * the same documents.
+     * Drops niqqud and cantillation marks and the single quote-like marks (geresh, apostrophe), and
+     * writes every double quote-like mark as the ASCII {@code "}.
+     *
+     * <p>The model's vocabulary knows the common acronyms only in their ASCII spelling, such as
+     * {@code ארה"ב} and {@code צה"ל}, and with the quote in place it also strips a prefix from them
+     * ({@code בארה"ב} gives {@code ארה"ב}). Without the quote it sees only letters it cannot
+     * segment. Gershayim and the curly quotes are the same mark, so they are written as the ASCII
+     * one and every spelling is looked up in the same way. The quote is removed again from the
+     * lemma, see {@link #withoutDoubleQuotes}.
      *
      * <p>Only words that contain a Hebrew letter reach this code, and a quote at the edge of a word
-     * is trimmed before that, so this only ever removes marks inside a word.
+     * is trimmed before that, so this only ever changes marks inside a word.
      */
     private static void appendUnlessHebrewMark(StringBuilder builder, char c) {
-        if (HebrewChars.isMark(c) == false && HebrewChars.isQuoteLike(c) == false) {
+        if (HebrewChars.isMark(c)) {
+            return;
+        }
+        if (HebrewChars.isDoubleQuoteLike(c)) {
+            builder.append('"');
+        } else if (HebrewChars.isQuoteLike(c) == false) {
             builder.append(c);
         }
+    }
+
+    /**
+     * The form a lemma is indexed in. The quote of an acronym helps the model, but the term must
+     * not depend on it: with or without the mark, and with any of the quote characters, a search
+     * has to find the same documents.
+     */
+    static String withoutDoubleQuotes(String lemma) {
+        return lemma.indexOf('"') < 0 ? lemma : lemma.replace("\"", "");
     }
 
     public int[] encode(String word) {
