@@ -37,6 +37,14 @@ final class HebrewChars {
     }
 
     /**
+     * The quote-like marks that Hebrew writes an acronym with in the middle of a word, as opposed to
+     * the single ones that mark a loanword: gershayim, the ASCII double quote and the curly ones.
+     */
+    static boolean isDoubleQuoteLike(int codePoint) {
+        return codePoint == '״' || codePoint == '"' || codePoint == '“' || codePoint == '”';
+    }
+
+    /**
      * Whitespace (including the no-break space, which Java does not treat as whitespace) and
      * invisible format characters such as the right-to-left mark and zero width joiner. They are
      * not part of any term, but they would otherwise stay inside it and break exact matches.

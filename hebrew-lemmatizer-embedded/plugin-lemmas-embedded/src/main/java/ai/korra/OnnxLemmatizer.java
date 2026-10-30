@@ -257,7 +257,7 @@ public class OnnxLemmatizer implements AutoCloseable {
             if (logitIdx < topPredictions.length) {
                 lemmas.add(selector.select(originalToken, topPredictions[logitIdx]));
             } else {
-                lemmas.add(WordPieceTokenizer.normalize(originalToken));
+                lemmas.add(WordPieceTokenizer.withoutDoubleQuotes(WordPieceTokenizer.normalize(originalToken)));
             }
             logitIdx += wpIds.length;
         }
