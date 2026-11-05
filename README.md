@@ -57,44 +57,6 @@ relative comparison, not a production capacity guarantee.
 
 Each release uses the same two filename patterns with its Elasticsearch version.
 
-### Uploading the Lex plugin to Elastic Cloud
-
-The DictaBERT-Lex plugin ZIP is larger than the Elastic Cloud UI's 200 MB
-upload limit. Create it through the Elastic Cloud Extensions API using a
-direct, publicly accessible download URL instead:
-
-First, create an [Elastic Cloud API key](https://www.elastic.co/docs/deploy-manage/api-keys/elastic-cloud-api-keys)
-from **Organization > API keys** in the Elastic Cloud Console. The key needs a
-role that can manage the target hosted deployment. Store it in
-`CLOUD_API_KEY`; this is a Cloud organization key, not an Elasticsearch API
-key created inside the deployment.
-
-```bash
-ES_VERSION=9.4.3
-
-curl --fail-with-body --silent --show-error --request POST \
-  'https://api.elastic-cloud.com/api/v1/deployments/extensions' \
-  --header "Authorization: ApiKey $CLOUD_API_KEY" \
-  --header 'Content-Type: application/json' \
-  --data "{\
-    \"name\": \"heb-lemmas-embedded-plugin\",\
-    \"extension_type\": \"plugin\",\
-    \"version\": \"${ES_VERSION}\",\
-    \"description\": \"DictaBERT-Lex Hebrew analyzer (heb_lemmas + heb_stopwords), ES ${ES_VERSION}\",\
-    \"download_url\": \"$(curl --fail --silent --show-error --output /dev/null --write-out '%{redirect_url}' "https://github.com/liladler/elasticsearch-analysis-hebrew-plugin/releases/download/v${ES_VERSION}/heb-lemmas-embedded-plugin-${ES_VERSION}.zip")\"\
-  }"
-```
-
-Set `ES_VERSION` once to the version being installed. It must exactly match both
-the target Elasticsearch version and the value in the plugin's
-`plugin-descriptor.properties`. The nested `curl` resolves the GitHub release
-redirect and passes its direct download URL to Elastic Cloud. The resolved URL
-is temporary, so run the complete command together as shown. The API-created
-extension can then be selected from the deployment's Extensions page.
-
-See Elastic's [Extensions API documentation](https://www.elastic.co/docs/deploy-manage/deploy/elastic-cloud/manage-plugins-extensions-through-api)
-for listing, updating, and attaching extensions to deployment plans.
-
 ## Build
 
 Prerequisites:
